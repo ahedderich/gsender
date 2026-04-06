@@ -43,6 +43,8 @@ import SDCard from 'app/features/SDCard';
 import { FaSdCard } from 'react-icons/fa';
 import { LuDrill } from 'react-icons/lu';
 import { AccessoryInstaller } from 'app/features/AccessoryInstaller';
+import ProbeCalibration from 'app/features/ProbeCalibration';
+import { GiTripleNeedle } from 'react-icons/gi';
 
 export const ReactRoutes = () => {
     return (
@@ -132,6 +134,12 @@ export const ReactRoutes = () => {
                                         icon={LuDrill}
                                         link={'/tools/accessoryInstall'}
                                     />
+                                    <ToolCard
+                                        title={'3D Probe Calibration'}
+                                        description={'Measure and record your 3D touch probe tip offset from centre'}
+                                        icon={GiTripleNeedle}
+                                        link={'/tools/probe-calibration'}
+                                    />
                                 </div>
                             </div>
                         }
@@ -219,6 +227,19 @@ export const ReactRoutes = () => {
                                 withFixedArea
                             >
                                 <SDCard />
+                            </Page>
+                        }
+                    />
+                    <Route
+                        path="probe-calibration"
+                        element={
+                            <Page
+                                title="3D Probe Calibration"
+                                description="Measure the stylus tip offset of your 3D touch probe"
+                                withGoBackButton
+                                withFixedArea
+                            >
+                                <ProbeCalibration />
                             </Page>
                         }
                     />

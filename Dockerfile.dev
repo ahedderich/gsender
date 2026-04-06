@@ -1,0 +1,32 @@
+FROM node:24
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    libopenjp2-tools \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy package files (lock files are optional)
+COPY package.json ./
+COPY bun.lock* ./
+COPY yarn.lock* ./
+
+# Install root dependencies
+RUN yarn install
+
+# Copy app package.json (lock files are optional)
+COPY src/app/package.json ./src/app/
+COPY src/app/yarn.lock* ./src/app/
+
+# Install app dependencies
+RUN cd src/app && yarn install
+
+# Expose ports
+# 8000 - Backend server
+# 5173 - Vite dev server (if using electron:hot)
+EXPOSE 8000 5173
+
+# Start development server
+# Note: Source code is mounted as volume, so changes will hot-reload
+CMD ["yarn", "dev"]

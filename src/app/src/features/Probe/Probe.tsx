@@ -28,6 +28,7 @@ import { Button as ShadcnButton } from 'app/components/shadcn/Button';
 import { Button } from 'app/components/Button';
 
 import { METRIC_UNITS, PROBING_CATEGORY } from '../../constants';
+import { TOUCHPLATE_TYPE_3D } from 'app/lib/constants';
 import ProbeImage from './ProbeImage';
 import ProbeDiameter from './ProbeDiameter';
 import ProbeDirectionSelection from './ProbeDirectionSelection';
@@ -35,13 +36,15 @@ import { Actions, State } from './definitions';
 import useKeybinding from 'app/lib/useKeybinding';
 import useShuttleEvents from 'app/hooks/useShuttleEvents';
 import Tooltip from 'app/components/Tooltip';
+import StockProbeWrapper from '../StockProbe';
 
 type ProbeProps = {
     state: State;
     actions: Actions;
+    advancedWizard?: boolean;
 };
 
-const Probe = ({ state, actions }: ProbeProps) => {
+const Probe = ({ state, actions, advancedWizard = false }: ProbeProps) => {
     // Use a ref to always have access to the latest state
     const stateRef = useRef(state);
     const actionsRef = useRef(actions);
@@ -125,6 +128,12 @@ const Probe = ({ state, actions }: ProbeProps) => {
 
     const probeCommand = availableProbeCommands[selectedProbeCommand];
 
+    // If advanced wizard is enabled and touchplate is 3D probe, show stock probing UI
+    if (advancedWizard && touchplateType === TOUCHPLATE_TYPE_3D) {
+        return <StockProbeWrapper />;
+    }
+
+    // Otherwise, render the normal probe UI
     return (
         <div className="w-full h-full max-xl:pt-1">
             <div className="grid grid-cols-[5fr_3fr] w-full h-full max-xl:max-h-[144px]">

@@ -619,6 +619,20 @@ export const SettingsMenu: SettingsMenuSection[] = [
                         },
                     },
                     {
+                        label: 'Advanced Probing Wizard',
+                        key: 'workspace.probeProfile.advancedWizard',
+                        type: 'boolean',
+                        description: 'Enable advanced probing wizard for 3D probe operations.',
+                        hidden: (getPending) => {
+                            const probeType = getPending(
+                                'workspace.probeProfile.touchplateType',
+                                '',
+                            );
+                            // Only show when using 3D probe
+                            return probeType !== TOUCHPLATE_TYPE_3D;
+                        },
+                    },
+                    {
                         label: 'Block thickness',
                         key: 'workspace.probeProfile.zThickness.standardBlock',
                         description:

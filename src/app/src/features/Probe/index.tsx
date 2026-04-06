@@ -97,6 +97,9 @@ const ProbeWidget = () => {
     const [touchplateType, setTouchplateType] = useState<TOUCHPLATE_TYPES_T>(
         store.get('workspace.probeProfile.touchplateType'),
     );
+    const [advancedWizard, setAdvancedWizard] = useState<boolean>(
+        store.get('workspace.probeProfile.advancedWizard', false),
+    );
     const [units, setUnits] = useState<UNITS_EN>(store.get('workspace.units'));
     const [testInterval, setTestInterval] = useState<NodeJS.Timeout>(null);
     const [availableTools, setAvailableTools] = useState<AvailableTool[]>(
@@ -611,7 +614,7 @@ const ProbeWidget = () => {
         <>
             <div className="relative">
                 <RunProbe state={state} actions={actions} />
-                <Probe state={state} actions={actions} />
+                <Probe state={state} actions={actions} advancedWizard={advancedWizard} />
             </div>
         </>
     );
