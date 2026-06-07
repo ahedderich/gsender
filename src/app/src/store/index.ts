@@ -16,6 +16,7 @@ import {
     TOUCHPLATE_TYPE_STANDARD,
 } from 'app/lib/constants.ts';
 import defaultMachineProfiles from 'app/features/Config/assets/MachineDefaults/defaultMachineProfiles.ts';
+import { defaultATCIMacros } from '../features/ATC/assets/defaultATCIMacros';
 import api from 'app/api';
 import pubsub from 'pubsub-js';
 import { BackupFrequencies } from 'app/workspace/definitions';
@@ -288,6 +289,26 @@ const cnc: CncData = {
     state: {},
 };
 
+const preserveSavedCommandKeys = (state: any, savedState: any): any => {
+    const savedCommandKeys = get(savedState, 'commandKeys', {});
+    const mergedCommandKeys = get(state, 'commandKeys', {});
+
+    if (
+        !(savedCommandKeys instanceof Object) ||
+        Array.isArray(savedCommandKeys)
+    ) {
+        return state;
+    }
+
+    // Keep dynamic command keys (for example, macro IDs) that are not in defaults.
+    set(state, 'commandKeys', {
+        ...mergedCommandKeys,
+        ...savedCommandKeys,
+    });
+
+    return state;
+};
+
 try {
     const text = getConfig();
     const data = JSON.parse(text);
@@ -304,9 +325,8 @@ try {
     log.error(e);
 }
 
-store.state = normalizeState(
-    merge(JSON.parse(JSON.stringify(defaultState)), cnc.state || {}),
-);
+const mergedState = merge(JSON.parse(JSON.stringify(defaultState)), cnc.state || {});
+store.state = normalizeState(preserveSavedCommandKeys(mergedState, cnc.state || {}));
 
 // Debouncing enforces that a function not be called again until a certain amount of time (e.g. 100ms) has passed without it being called.
 store.on(
@@ -331,11 +351,14 @@ const migrateStore = (): void => {
         return;
     }
 
+    if (semver.lt(cnc.version, '1.6.2')) {
+        store.set('widgets.atc.templates', defaultATCIMacros);
+    }
+
     if (semver.lt(cnc.version, '1.6.0')) {
-        const machineProfileID = Number(store.get(
-            'workspace.machineProfile.id',
-            4,
-        ));
+        const machineProfileID = Number(
+            store.get('workspace.machineProfile.id', 4),
+        );
 
         if (machineProfileID === 3) {
             // Set 2x4 (2)
@@ -345,7 +368,7 @@ const migrateStore = (): void => {
             if (defaultMachineProfile) {
                 store.set('workspace.machineProfile', defaultMachineProfile);
             }
-        }  else if (machineProfileID === 1) {
+        } else if (machineProfileID === 1) {
             // set 0 (4x4)
             const defaultMachineProfile = defaultMachineProfiles.find(
                 (profile) => profile.id === 0,
@@ -355,7 +378,6 @@ const migrateStore = (): void => {
             }
         }
     }
-
 
     if (semver.lt(cnc.version, '1.5.5')) {
         // if user has default retraction distance (4), change it to the new default (2)
@@ -739,6 +761,11 @@ try {
         window.ipcRenderer.send(
             'assignPromptExit',
             store.get('workspace.promptExit'),
+        );
+
+        window.ipcRenderer.send(
+            'change-power-saving',
+            store.get('workspace.powerSaving'),
         );
     }
 } catch (err) {

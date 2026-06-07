@@ -21,6 +21,11 @@ export type Notification = {
 
 export type BackupFrequencies = 'On Update' | 'Daily' | 'Weekly' | 'Monthly';
 
+export type FirstToolBehavior =
+    | 'Always run full wizard'
+    | 'Prompt for first tool'
+    | 'Always probe length only';
+
 // Interfaces
 
 export interface Workspace {
@@ -29,7 +34,7 @@ export interface Workspace {
     spindleFunctions: boolean;
     coolantFunctions: boolean;
     atcEnabled: boolean;
-    sendUsageData: boolean;
+    collectUsageDataStatus: 'accepted' | 'denied' | 'pending';
     safeRetractHeight: number;
     customDecimalPlaces: number;
     jobsFinished: number;
@@ -43,6 +48,7 @@ export interface Workspace {
     promptExit: boolean;
     backupFreq: BackupFrequencies;
     lastBackupTime: number;
+    powerSaving: boolean;
     park: object;
     jobTimes: number[];
     toolChange: {
@@ -50,6 +56,7 @@ export interface Workspace {
         skipDialog: boolean;
         moveToManualPosition: boolean;
         manualPosition: BasicPosition;
+        firstToolBehaviour: FirstToolBehavior;
     };
     toolChangeOption:
         | 'Ignore'
@@ -117,6 +124,7 @@ export interface Workspace {
             showVisually: boolean;
         };
         showKeyboardMap: boolean;
+        displayScaleFactor?: string;
     };
     preventJoggingPastLimits: boolean;
 }

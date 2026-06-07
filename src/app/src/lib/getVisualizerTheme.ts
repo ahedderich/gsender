@@ -7,9 +7,10 @@ import {
     DARK_THEME_VALUES,
     PARTS_LIST,
 } from 'app/features/Visualizer/constants';
+import { THEMES_T } from 'app/features/Visualizer/definitions';
 
-export function getVisualizerTheme(): Map<string, string> {
-    const { theme } = store.get('widgets.visualizer') as { theme: string };
+export function getVisualizerTheme(themeType?: THEMES_T): Map<string, string> {
+    const theme = themeType || store.get('widgets.visualizer.theme');
     if (theme === LIGHT_THEME) {
         return LIGHT_THEME_VALUES as Map<string, string>;
     }

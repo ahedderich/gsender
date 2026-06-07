@@ -45,7 +45,9 @@ import {
     GRBL,
     GRBLHAL,
     GRBL_ACTIVE_STATE_CHECK,
-    LASER_MODE, OUTLINE_MODE_RAPIDLESS_SQUARE,
+    LASER_MODE,
+    OUTLINE_MODE_RAPIDLESS_SQUARE,
+    LIGHTWEIGHT_OPTIONS,
 } from 'app/constants';
 import CombinedCamera from 'app/lib/three/oldCombinedCamera';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer';
@@ -100,6 +102,7 @@ const CAMERA_DISTANCE = 1900; // Move the camera out a bit from the origin (0, 0
 const TRACKBALL_CONTROLS_MIN_DISTANCE = 1;
 const TRACKBALL_CONTROLS_MAX_DISTANCE = 7000;
 import { outlineResponse } from '../../workers/Outline.response';
+import { shouldVisualizeSVG } from '../../workers/Visualize.response';
 import { uploadGcodeFileToServer } from 'app/lib/fileupload';
 import { toast } from 'app/lib/toaster';
 import { getZUpTravel } from 'app/lib/SoftLimits.js';
@@ -288,9 +291,10 @@ class Visualizer extends Component {
     }
 
     addStoreEvents() {
-        store.on('_dimensions', () => {
+        this._dimensionsHandler = () => {
             this.changeMachineProfile();
-        });
+        };
+        store.on('_dimensions', this._dimensionsHandler);
     }
 
     componentDidMount() {
@@ -692,6 +696,12 @@ class Visualizer extends Component {
         this.animationLoopRunning = false;
         this.isAgitated = false;
 
+        // Remove store _dimensions listener
+        if (this._dimensionsHandler) {
+            store.removeListener('_dimensions', this._dimensionsHandler);
+            this._dimensionsHandler = null;
+        }
+
         // Clean up WebGL context handlers
         if (this.contextLostHandler) {
             window.removeEventListener(
@@ -706,6 +716,21 @@ class Visualizer extends Component {
                 this.contextRestoredHandler,
                 false,
             );
+        }
+
+        // Dispose post-processing composers and renderer
+        // (defensive cleanup — normally the component stays mounted via display:none)
+        [
+            this.copyComposer,
+            this.fxaaComposer,
+            this.bloomComposer,
+            this.finalComposer,
+        ].forEach((composer) => {
+            if (composer) composer.dispose();
+        });
+        if (this.renderer) {
+            this.renderer.dispose();
+            this.renderer = null;
         }
     }
 
@@ -760,7 +785,10 @@ class Visualizer extends Component {
     reloadGCode() {
         const { actions, state } = this.props;
         const { gcode } = state;
-        actions.loadGCode('', gcode.visualization);
+        // Guard against null visualization — occurs when rebuildSceneContents() is called
+        // after exiting EVERYTHING lite mode where no geometry was ever parsed.
+        if (!gcode.visualization) return;
+        actions.loadGCode(gcode.name, gcode.visualization);
     }
 
     removeSceneGroup() {
@@ -770,7 +798,8 @@ class Visualizer extends Component {
     showAnimation = () => {
         const state = { ...this.props.state };
         const { liteMode, objects, minimizeRenders } = state;
-        const { reducedMotion } = reduxStore.getState().preferences.accessibility;
+        const { reducedMotion } =
+            reduxStore.getState().preferences.accessibility;
 
         // We don't animate if minimizeRenders is turned on or reducedMotion is enabled
         if (minimizeRenders || reducedMotion) {
@@ -937,9 +966,13 @@ class Visualizer extends Component {
         const metricGridCountY = Math.ceil(mm.depth / 10) * 10;
 
         const gridCountX =
-            units === IMPERIAL_UNITS ? imperialGridCountX : metricGridCountX;
+            units === IMPERIAL_UNITS
+                ? imperialGridCountX
+                : Math.ceil(metricGridCountX / 10);
         const gridCountY =
-            units === IMPERIAL_UNITS ? imperialGridCountY : metricGridCountY;
+            units === IMPERIAL_UNITS
+                ? imperialGridCountY
+                : Math.ceil(metricGridCountY / 10);
         const gridSpacing =
             units === IMPERIAL_UNITS
                 ? IMPERIAL_GRID_SPACING
@@ -1056,7 +1089,11 @@ class Visualizer extends Component {
                 }
             }),
             pubsub.subscribe('spindle:mode', () => {
-                if (!this.cuttingTool || !this.laserPointer || !this.cuttingPointer) {
+                if (
+                    !this.cuttingTool ||
+                    !this.laserPointer ||
+                    !this.cuttingPointer
+                ) {
                     return;
                 }
                 const { state, isConnected } = this.props;
@@ -1229,7 +1266,8 @@ class Visualizer extends Component {
                         null,
                     );
 
-                    const isRapidless = outlineMode === OUTLINE_MODE_RAPIDLESS_SQUARE;
+                    const isRapidless =
+                        outlineMode === OUTLINE_MODE_RAPIDLESS_SQUARE;
                     const content = isRapidless
                         ? reduxStore.getState().file.content
                         : null;
@@ -1813,6 +1851,9 @@ class Visualizer extends Component {
                         const object = new THREE.Object3D();
                         object.add(mesh);
 
+                        // unload the old one
+                        this.group.remove(this.cuttingTool);
+
                         this.cuttingTool = object;
                         this.cuttingTool.name = 'CuttingTool';
                         this.cuttingTool.visible =
@@ -1823,6 +1864,16 @@ class Visualizer extends Component {
                                 : state.objects.cuttingTool.visible);
 
                         this.group.add(this.cuttingTool);
+
+                        // Sync to current machine position (e.g. after remount from lite mode toggle)
+                        if (this.props.isConnected) {
+                            this.workPosition = this.props.workPosition;
+                            this.machinePosition = this.props.machinePosition;
+                            this.updateCuttingToolPosition(
+                                this.props.workPosition,
+                            );
+                        }
+
                         // Update the scene
                         this.updateScene();
                     })
@@ -1837,6 +1888,9 @@ class Visualizer extends Component {
             {
                 // Laser Tool
                 this.setupScene();
+
+                // unload the old one
+                this.group.remove(this.laserPointer);
 
                 // add tool
                 this.laserPointer = new LaserPointer({
@@ -2037,6 +2091,228 @@ class Visualizer extends Component {
 
         // Update the scene
         this.updateScene();
+    }
+
+    // Called when entering lite mode to free GPU memory while keeping the renderer alive.
+    // Geometries/materials are re-created on the next reloadGCode/reparseGCode call.
+    disposeGeometries() {
+        // Reset pivot internal state to (0,0,0) so that on rebuild, pivotPoint.set(center)
+        // produces the correct delta to re-center fresh children. Without this, the pivot
+        // retains the old center value and the delta becomes zero on reload.
+        this.pivotPoint.clear();
+
+        this.animationLoopRunning = false;
+
+        if (this.scene) {
+            this.scene.traverse((obj) => {
+                if (obj.geometry) {
+                    obj.geometry.dispose();
+                }
+                if (obj.material) {
+                    const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+                    mats.forEach((m) => {
+                        if (m.map) m.map.dispose();
+                        m.dispose();
+                    });
+                }
+            });
+            while (this.scene.children.length > 0) {
+                this.scene.remove(this.scene.children[0]);
+            }
+        }
+
+        // Null out object refs so they are recreated on next scene setup
+        this.coordinateAxes = null;
+        this.limits = null;
+        this.visualizer = null;
+        this.cuttingTool = null;
+        this.laserPointer = null;
+        this.cuttingPointer = null;
+    }
+
+    // Rebuilds all static scene contents (lights, grids, tools, limits) after disposeGeometries()
+    // without recreating the renderer, camera, or controls. Ends with reloadGCode() to restore toolpath.
+    rebuildSceneContents() {
+        if (!this.scene || !this.renderer) {
+            console.warn(
+                'Visualizer: rebuildSceneContents called before scene/renderer ready',
+            );
+            return;
+        }
+
+        // Resize renderer now that the container is visible again (was display:none in lite mode).
+        // componentDidUpdate runs after the DOM update, so the container has correct dimensions.
+        this.resizeRenderer();
+
+        const { state, isConnected } = this.props;
+        const { units, objects, currentTheme, liteMode } = state;
+        const isLaser = isLaserMode();
+
+        // Clear zombie children left in the group after disposeGeometries()
+        while (this.group.children.length > 0) {
+            this.group.remove(this.group.children[0]);
+        }
+
+        {
+            // Directional Light
+            const color = 0xffffff;
+            const intensity = 1;
+            let light;
+
+            light = new THREE.DirectionalLight(color, intensity);
+            light.position.set(-1, -1, 1);
+            this.scene.add(light);
+
+            light = new THREE.DirectionalLight(color, intensity);
+            light.position.set(1, -1, 1);
+            this.scene.add(light);
+        }
+
+        {
+            // Ambient Light
+            const light = new THREE.AmbientLight(colornames('gray 25'));
+            this.scene.add(light);
+        }
+
+        {
+            // Imperial Coordinate System
+            const visible = objects.coordinateSystem.visible;
+            const imperialCoordinateSystem = this.createCoordinateSystem(IMPERIAL_UNITS);
+            imperialCoordinateSystem.name = 'ImperialCoordinateSystem';
+            imperialCoordinateSystem.visible = visible && units === IMPERIAL_UNITS;
+            this.group.add(imperialCoordinateSystem);
+        }
+
+        {
+            // Metric Coordinate System
+            const visible = objects.coordinateSystem.visible;
+            const metricCoordinateSystem = this.createCoordinateSystem(METRIC_UNITS);
+            metricCoordinateSystem.name = 'MetricCoordinateSystem';
+            metricCoordinateSystem.visible = visible && units === METRIC_UNITS;
+            this.group.add(metricCoordinateSystem);
+        }
+
+        {
+            // Imperial Grid Line Numbers
+            const visible = objects.gridLineNumbers.visible;
+            const imperialGridLineNumbers = this.createGridLineNumbers(IMPERIAL_UNITS);
+            imperialGridLineNumbers.name = 'ImperialGridLineNumbers';
+            imperialGridLineNumbers.visible = visible && units === IMPERIAL_UNITS;
+            this.group.add(imperialGridLineNumbers);
+        }
+
+        {
+            // Metric Grid Line Numbers
+            const visible = objects.gridLineNumbers.visible;
+            const metricGridLineNumbers = this.createGridLineNumbers(METRIC_UNITS);
+            metricGridLineNumbers.name = 'MetricGridLineNumbers';
+            metricGridLineNumbers.visible = visible && units === METRIC_UNITS;
+            this.group.add(metricGridLineNumbers);
+        }
+
+        {
+            // Cutting Tool (async STL load)
+            Promise.all([
+                loadSTL('assets/models/stl/bit.stl').then((geometry) => geometry),
+                loadTexture('assets/textures/brushed-steel-texture.jpg').then((texture) => texture),
+            ])
+                .then((result) => {
+                    const [geometry, texture] = result;
+
+                    geometry.rotateX(-Math.PI / 2);
+                    geometry.scale(0.5, 0.5, 0.5);
+                    geometry.computeBoundingBox();
+                    geometry.translate(0, 0, -geometry.boundingBox.min.z);
+
+                    let material = new THREE.MeshLambertMaterial({
+                        map: texture,
+                        opacity: 0.9,
+                        transparent: false,
+                        emissive: 0xcccccc,
+                        emissiveIntensity: 0.5,
+                        color: '#caf0f8',
+                    });
+
+                    if (geometry.hasColors) {
+                        material.vertexColors = true;
+                    }
+
+                    const mesh = new THREE.Mesh(geometry, material);
+                    const object = new THREE.Object3D();
+                    object.add(mesh);
+
+                    this.group.remove(this.cuttingTool);
+
+                    this.cuttingTool = object;
+                    this.cuttingTool.name = 'CuttingTool';
+                    this.cuttingTool.visible =
+                        this.props.isConnected &&
+                        !isLaserMode() &&
+                        (liteMode
+                            ? state.objects.cuttingTool.visibleLite
+                            : state.objects.cuttingTool.visible);
+
+                    this.group.add(this.cuttingTool);
+
+                    if (this.props.isConnected) {
+                        this.workPosition = this.props.workPosition;
+                        this.machinePosition = this.props.machinePosition;
+                        this.updateCuttingToolPosition(this.props.workPosition);
+                    }
+
+                    this.updateScene();
+                })
+                .catch((error) => {
+                    console.error('Visualizer: Failed to load cutting tool assets during rebuild:', error);
+                });
+        }
+
+        {
+            // Laser Tool — skip setupScene() since EffectComposers are still valid
+            this.group.remove(this.laserPointer);
+
+            this.laserPointer = new LaserPointer({
+                color: currentTheme.get(CUTTING_PART),
+                diameter: 4,
+            });
+            this.laserPointer.name = 'LaserPointer';
+            this.laserPointer.visible =
+                isConnected &&
+                isLaser &&
+                (liteMode
+                    ? state.objects.cuttingTool.visibleLite
+                    : state.objects.cuttingTool.visible);
+
+            this.group.add(this.laserPointer);
+        }
+
+        {
+            // Cutting Pointer
+            this.createCuttingPointer();
+        }
+
+        {
+            // Limits
+            const limits = _get(this.machineProfile, 'limits');
+            const {
+                xmin = 0,
+                xmax = 0,
+                ymin = 0,
+                ymax = 0,
+                zmin = 0,
+                zmax = 0,
+            } = { ...limits };
+            this.limits = this.createLimits(xmin, xmax, ymin, ymax, zmin, zmax);
+            this.limits.name = 'Limits';
+            this.limits.visible = objects.limits.visible;
+            this.updateLimitsPosition();
+        }
+
+        this.scene.add(this.group);
+
+        this.startAnimationLoop();
+        this.updateScene({ forceUpdate: true });
+        this.reloadGCode();
     }
 
     createCombinedCamera(width, height) {
@@ -2510,6 +2786,16 @@ class Visualizer extends Component {
     }
 
     load(name, vizualization, callback) {
+        // When in SVG lite mode, the 3D Visualizer is hidden with a cleared scene.
+        // Returning early here prevents creating a GCodeVisualizer and calling
+        // pivotPoint.set(center), which would corrupt the pivot state for the
+        // next full-3D restore. The SVGVisualizer handles this file:load independently.
+        if (shouldVisualizeSVG()) {
+            const { setVisualizerReady } = this.props.actions;
+            setVisualizerReady();
+            return;
+        }
+
         // Remove previous G-code object
         this.unload();
         const { currentTheme, disabled, disabledLite, liteMode } =
@@ -2568,6 +2854,7 @@ class Visualizer extends Component {
             'widgets.visualizer.hideProcessedLines',
             false,
         );
+
         this.visualizer.setHideProcessedLines(hideProcessedLines);
 
         const shouldRenderVisualization = liteMode ? !disabledLite : !disabled;
@@ -2844,6 +3131,7 @@ class Visualizer extends Component {
             return;
         }
 
+        this.props.actions.camera.toFreeView();
         this.controls.zoomIn(delta);
         this.controls.update();
 
@@ -2857,6 +3145,7 @@ class Visualizer extends Component {
             return;
         }
 
+        this.props.actions.camera.toFreeView();
         this.controls.zoomOut(delta);
         this.controls.update();
 
@@ -2876,6 +3165,7 @@ class Visualizer extends Component {
         pan.copy(eye).cross(objectUp.clone()).setLength(deltaX);
         pan.add(objectUp.clone().setLength(deltaY));
 
+        this.props.actions.camera.toFreeView();
         this.controls.object.position.add(pan);
         this.controls.target.add(pan);
         this.controls.update();
@@ -2884,21 +3174,25 @@ class Visualizer extends Component {
     // http://stackoverflow.com/questions/18581225/orbitcontrol-or-trackballcontrol
     panUp() {
         const { noPan, panSpeed } = this.controls;
+        this.props.actions.camera.toFreeView();
         !noPan && this.pan(0, 1 * panSpeed);
     }
 
     panDown() {
         const { noPan, panSpeed } = this.controls;
+        this.props.actions.camera.toFreeView();
         !noPan && this.pan(0, -1 * panSpeed);
     }
 
     panLeft() {
         const { noPan, panSpeed } = this.controls;
+        this.props.actions.camera.toFreeView();
         !noPan && this.pan(1 * panSpeed, 0);
     }
 
     panRight() {
         const { noPan, panSpeed } = this.controls;
+        this.props.actions.camera.toFreeView();
         !noPan && this.pan(-1 * panSpeed, 0);
     }
 
@@ -2919,7 +3213,8 @@ class Visualizer extends Component {
     isHovered = false;
 
     handleKeyDown = (event) => {
-        const { visualizerKeyboardControl } = reduxStore.getState().preferences.accessibility;
+        const { visualizerKeyboardControl } =
+            reduxStore.getState().preferences.accessibility;
         if (!visualizerKeyboardControl || !this.isHovered) return;
 
         const rotateStep = 0.1;
@@ -2993,8 +3288,12 @@ class Visualizer extends Component {
                 className="overflow-hidden h-full w-full rounded-lg outline-none"
                 ref={this.setRef}
                 id="visualizer-wrapper"
-                onMouseEnter={() => { this.isHovered = true; }}
-                onMouseLeave={() => { this.isHovered = false; }}
+                onMouseEnter={() => {
+                    this.isHovered = true;
+                }}
+                onMouseLeave={() => {
+                    this.isHovered = false;
+                }}
                 tabIndex={0}
                 role="region"
                 aria-label="3D Visualizer"

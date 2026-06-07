@@ -120,10 +120,11 @@ const PrimaryVisualizer = ({
 
                     <div className="absolute portrait:right-5 portrait:left-auto left-5 bottom-44 text-4xl text-white flex flex-col gap-2">
                         <Tooltip content="Toggle lightweight mode">
-                            <button>
+                            <button className="bg-gray-600 bg-opacity-50 rounded-full p-3.5">
                                 <FaFeatherAlt
                                     className={cx('cursor-pointer', {
-                                        'text-gray-500': !state.liteMode,
+                                        'text-gray-400': !state.liteMode,
+                                        'text-green-400': state.liteMode,
                                     })}
                                     onClick={() =>
                                         actions.handleLiteModeToggle()

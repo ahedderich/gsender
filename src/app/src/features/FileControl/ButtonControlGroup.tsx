@@ -6,13 +6,14 @@ import isElectron from 'is-electron';
 import pubsub from 'pubsub-js';
 import debounce from 'lodash/debounce';
 import throttle from 'lodash/throttle';
+import { usePostHog } from '@posthog/react';
 
 import { Button } from 'app/components/Button';
 import { RootState, store as reduxStore } from 'app/store/redux';
 import store from 'app/store';
 import controller from 'app/lib/controller';
 import {
-    CARVING_CATEGORY,
+    CARVING_CATEGORY, GRBL_ACTIVE_STATE_CHECK,
     VISUALIZER_PRIMARY,
     WORKFLOW_STATE_RUNNING,
 } from 'app/constants';
@@ -51,6 +52,7 @@ import get from 'lodash/get';
 import { Tooltip } from 'app/components/Tooltip';
 
 const ButtonControlGroup = () => {
+    const posthog = usePostHog();
     const isIOSDevice = /iPad|iPhone|iPod/.test(navigator.platform) ||
         (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -66,7 +68,11 @@ const ButtonControlGroup = () => {
     const workflowState = useSelector(
         (state: RootState) => state.controller.workflow.state,
     );
+
+    const activeState = useTypedSelector((state: RootState) => state.controller.state.status?.activeState);
+
     const isRunning = workflowState === WORKFLOW_STATE_RUNNING;
+    const isCheck = workflowState === GRBL_ACTIVE_STATE_CHECK;
     const canClick = !isRunning;
 
     useEffect(() => {
@@ -157,6 +163,11 @@ const ButtonControlGroup = () => {
             controller.port,
             VISUALIZER_PRIMARY,
         );
+        posthog?.capture('file_loaded', {
+            file_name: file.name,
+            file_size_bytes: file.size,
+            source: 'file_picker',
+        });
     };
 
     const handleClickLoadFile = () => {
@@ -196,6 +207,7 @@ const ButtonControlGroup = () => {
             return;
         }
 
+        posthog?.capture('file_closed', { file_name: name });
         controller.command('gcode:unload');
         reduxStore.dispatch(unloadFileInfo());
         pubsub.publish('unload:file');
@@ -224,7 +236,7 @@ const ButtonControlGroup = () => {
                                     <MdKeyboardArrowDown className="w-10 h-8" />
                                 }
                                 variant="ghost"
-                                disabled={!canClick}
+                                disabled={!canClick || isCheck}
                                 className="h-full rounded-none"
                                 aria-label="View Recent Files"
                             />

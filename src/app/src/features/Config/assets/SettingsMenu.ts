@@ -38,10 +38,10 @@ import {
     LIGHTWEIGHT_OPTIONS,
     OUTLINE_MODES,
     SPINDLE_MODE,
+    THEMES,
     WORKSPACE_MODE,
 } from 'app/constants';
 import { LaserWizard } from 'app/features/Config/components/wizards/LaserWizard.tsx';
-import { ATCIWizard } from 'app/features/Config/components/wizards/ATCiWizard.tsx';
 import {
     GamepadLinkWizard,
     KeyboardLinkWizard,
@@ -69,6 +69,9 @@ import {
     TOASTER_UNTIL_CLOSE,
 } from 'app/lib/toaster/ToasterLib';
 import isElectron from 'is-electron';
+import { THEMES_T } from 'app/features/Visualizer/definitions';
+import { JSX } from 'react';
+import posthog from 'posthog-js';
 
 export interface SettingsMenuSection {
     label: string;
@@ -109,20 +112,25 @@ export interface gSenderSetting {
     value?: gSenderSettingsValues;
     defaultValue?: any;
     dirty?: boolean;
+    ignoreDefaultCheck?: boolean;
     eventType?: string;
     wizard?: () => JSX.Element;
     toolLink?: string;
     toolLinkLabel?: string;
     disabled?: () => boolean;
     hidden?: (getPending: (key: string, defaultValue?: any) => any) => boolean;
+    valueTransform?: (v: any) => any;
     onDisable?: () => void;
     onEnable?: () => void;
     onUpdate?: () => void;
+    onApply?: () => void;
+    onChange?: (args?: any) => void;
     min?: number;
     max?: number;
     remap?: EEPROM;
     remapped?: boolean;
     forceEEPROM?: boolean;
+    hideWhenFirmwareCurrent?: boolean;
 }
 
 export interface gSenderSubSection {
@@ -245,6 +253,28 @@ export const SettingsMenu: SettingsMenuSection[] = [
                         options: OUTLINE_MODES,
                     },
                     {
+                        label: 'Power Saving',
+                        key: 'workspace.powerSaving',
+                        type: 'boolean',
+                        description: 'Allow screen to blank/sleep.',
+                        onEnable: () => {
+                            if (isElectron()) {
+                                window.ipcRenderer.send(
+                                    'change-power-saving',
+                                    true,
+                                );
+                            }
+                        },
+                        onDisable: () => {
+                            if (isElectron()) {
+                                window.ipcRenderer.send(
+                                    'change-power-saving',
+                                    false,
+                                );
+                            }
+                        },
+                    },
+                    {
                         label: 'Prompt on exit',
                         key: 'workspace.promptExit',
                         type: 'boolean',
@@ -276,11 +306,26 @@ export const SettingsMenu: SettingsMenuSection[] = [
                         options: ['On Update', 'Daily', 'Weekly', 'Monthly'],
                     },
                     {
-                        label: 'Send usage data',
-                        key: 'workspace.sendUsageData',
+                        label: 'Collect usage data',
+                        key: 'workspace.collectUsageDataStatus',
                         description:
-                            'This info is sent to us as an anonymous data point, but greatly helps us improve gSender by seeing how people use it.',
+                            'This info is collected anonymously to help us improve gSender by seeing how people use it.',
                         type: 'boolean',
+                        valueTransform: (v: any) => v === 'accepted' || v === true,
+                        onApply: () => {
+                            const toggle = store.get('workspace.collectUsageDataStatus');
+                            store.replace(
+                                'workspace.collectUsageDataStatus',
+                                toggle === true || toggle === 'accepted' ? 'accepted' : 'denied',
+                            );
+
+                            if (toggle === true || toggle === 'accepted') {
+                                posthog.opt_in_capturing();
+                            } else {
+                                posthog.opt_out_capturing();
+                            }
+                        },
+                        ignoreDefaultCheck: true,
                     },
                 ],
             },
@@ -298,11 +343,11 @@ export const SettingsMenu: SettingsMenuSection[] = [
                         label: 'Visualizer theme',
                         key: 'widgets.visualizer.theme',
                         description:
-                            'Independant colour control for the visualizer.',
+                            'Independent colour control for the visualizer.',
                         type: 'select',
-                        options: ['Light', 'Dark'],
-                        onUpdate: () => {
-                            pubsub.publish('theme:change');
+                        options: [THEMES.LIGHT_THEME, THEMES.DARK_THEME],
+                        onChange: (theme: THEMES_T) => {
+                            pubsub.publish('theme:change', theme);
                         },
                     },
                     {
@@ -601,6 +646,13 @@ export const SettingsMenu: SettingsMenuSection[] = [
                             TOUCHPLATE_TYPE_3D,
                             TOUCHPLATE_TYPE_BITZERO,
                         ],
+                    },
+                    {
+                        label: 'Show touch plate switcher',
+                        key: 'widgets.probe.touchplateTypeSwitcher',
+                        description:
+                            'Show a button on Probe tab to allow switching between touch plate types.',
+                        type: 'boolean',
                     },
                     {
                         label: 'Tip diameter',
@@ -1332,14 +1384,33 @@ export const SettingsMenu: SettingsMenuSection[] = [
                         eID: '$32',
                     },
                     {
-                        label: 'Spindle on delay',
+                        type: 'eeprom',
+                        eID: '$394',
+                    },
+                    {
+                        type: 'eeprom',
+                        eID: '$392',
+                    },
+                    {
+                        label: 'Insert dwell for spindle commands',
                         key: 'widgets.spindle.delay',
                         description:
-                            'Adds a delay to give the spindle time to spin up. ($392, Default 0)',
-                        type: 'hybrid',
-                        eID: '$392',
+                            'Adds a delay to give the spindle time to spin up.  This will insert a G4 command on every M3/M4 within the file, and is unnecessary if your firmware otherwise handles spindle-at-speed operations. (Default 0)',
+                        type: 'number',
                         unit: 's',
+                        defaultValue: 0,
+                        onUpdate: () => {
+                            const delay = Number(
+                                store.get('widgets.spindle.delay', 0),
+                            );
+                            controller.command('settings:updated', {
+                                spindleDelay: Number.isFinite(delay)
+                                    ? delay
+                                    : 0,
+                            });
+                        },
                     },
+
                     {
                         type: 'eeprom',
                         eID: '$539',
@@ -1549,6 +1620,7 @@ export const SettingsMenu: SettingsMenuSection[] = [
                             'X-axis offset from the spindle. (Mark with a v-bit then track the laser movement to reach that mark, $741, Default 0)',
                         type: 'hybrid',
                         eID: '$741',
+                        remap: '$770',
                         unit: 'mm',
                     },
                     {
@@ -1558,7 +1630,8 @@ export const SettingsMenu: SettingsMenuSection[] = [
                             'Y-axis offset from the spindle. (Mark with a v-bit then track the laser movement to reach that mark, $742, Default 0)',
                         type: 'hybrid',
                         eID: '$742',
-                        unit: 'rpm',
+                        remap: '$771',
+                        unit: 'mm',
                     },
                     {
                         type: 'eeprom',
@@ -1810,6 +1883,26 @@ export const SettingsMenu: SettingsMenuSection[] = [
                         },
                     },
                     {
+                        label: 'First tool behaviour',
+                        type: 'select',
+                        key: 'workspace.toolChange.firstToolBehaviour',
+                        description:
+                            'Control how the first tool change is handled. Many CAM programs add an initial tool change command even when you already have the tool loaded.\n\n"Always run full wizard" runs the complete tool change process.\n\n"Prompt for first tool" asks whether to run the full wizard or just probe the current tool length.\n\n"Always probe length only" skips the tool change and only measures the current tool.',
+                        options: [
+                            'Always run full wizard',
+                            'Prompt for first tool',
+                            'Always probe length only',
+                        ],
+                        defaultValue: 'Always run full wizard',
+                        hidden: (getPending) => {
+                            const strategy = getPending(
+                                'workspace.toolChangeOption',
+                                '',
+                            );
+                            return strategy !== 'Fixed Tool Sensor';
+                        },
+                    },
+                    {
                         label: 'Set tool change location',
                         type: 'boolean',
                         key: 'workspace.toolChange.moveToManualPosition',
@@ -1839,7 +1932,10 @@ export const SettingsMenu: SettingsMenuSection[] = [
                                 'workspace.toolChange.moveToManualPosition',
                                 false,
                             );
-                            return strategy !== 'Fixed Tool Sensor' || !moveToLocation;
+                            return (
+                                strategy !== 'Fixed Tool Sensor' ||
+                                !moveToLocation
+                            );
                         },
                     },
                     {
@@ -2125,7 +2221,9 @@ export const SettingsMenu: SettingsMenuSection[] = [
                         description: 'Play sound when a job finishes.',
                         type: 'boolean',
                         hidden: () =>
-                            !store.get('workspace.accessibility.audioCues.enabled'),
+                            !store.get(
+                                'workspace.accessibility.audioCues.enabled',
+                            ),
                         onUpdate: () => {
                             pubsub.publish('accessibility:update');
                         },
@@ -2137,7 +2235,9 @@ export const SettingsMenu: SettingsMenuSection[] = [
                             'Play sound when the machine enters an alarm state.',
                         type: 'boolean',
                         hidden: () =>
-                            !store.get('workspace.accessibility.audioCues.enabled'),
+                            !store.get(
+                                'workspace.accessibility.audioCues.enabled',
+                            ),
                         onUpdate: () => {
                             pubsub.publish('accessibility:update');
                         },
@@ -2145,10 +2245,13 @@ export const SettingsMenu: SettingsMenuSection[] = [
                     {
                         label: 'Tool change sound',
                         key: 'workspace.accessibility.audioCues.toolChange',
-                        description: 'Play sound when a tool change is required.',
+                        description:
+                            'Play sound when a tool change is required.',
                         type: 'boolean',
                         hidden: () =>
-                            !store.get('workspace.accessibility.audioCues.enabled'),
+                            !store.get(
+                                'workspace.accessibility.audioCues.enabled',
+                            ),
                         onUpdate: () => {
                             pubsub.publish('accessibility:update');
                         },
@@ -2159,7 +2262,9 @@ export const SettingsMenu: SettingsMenuSection[] = [
                         description: 'Play sound after a successful probe.',
                         type: 'boolean',
                         hidden: () =>
-                            !store.get('workspace.accessibility.audioCues.enabled'),
+                            !store.get(
+                                'workspace.accessibility.audioCues.enabled',
+                            ),
                         onUpdate: () => {
                             pubsub.publish('accessibility:update');
                         },
@@ -2207,6 +2312,41 @@ export const SettingsMenu: SettingsMenuSection[] = [
                             'Choose between a slider or a number input for adjusting spindle speed.',
                         options: ['Slider', 'Number'],
                         defaultValue: 'Slider',
+                    },
+                    {
+                        label: 'App display scale',
+                        key: 'workspace.accessibility.displayScaleFactor',
+                        type: 'select',
+                        options: [
+                            '50%',
+                            '67%',
+                            '75%',
+                            '100%',
+                            '125%',
+                            '150%',
+                            '175%',
+                            '200%',
+                        ],
+                        defaultValue: '100%',
+                        description:
+                            "Override the app's display scale independently of your OS' DPI settings.",
+                        hidden: () => !isElectron(),
+                        onUpdate: () => {
+                            if (isElectron()) {
+                                const scaleFactorStr = store.get(
+                                    'workspace.accessibility.displayScaleFactor',
+                                    '100%',
+                                );
+                                // Normalize percentage to decimal (e.g., "100%" -> 1.0)
+                                const scaleFactor =
+                                    parseFloat(scaleFactorStr) / 100;
+                                // @ts-ignore
+                                window.ipcRenderer.send(
+                                    'save-display-scale',
+                                    scaleFactor,
+                                );
+                            }
+                        },
                     },
                 ],
             },

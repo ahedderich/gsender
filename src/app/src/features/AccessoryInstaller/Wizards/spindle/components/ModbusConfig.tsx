@@ -45,11 +45,15 @@ export function ModbusConfig({ onComplete, onUncomplete }: StepProps) {
                 </b>
             </p>
             <p className="dark:text-white">
-                Now that your Spindle has been configured and controller
-                rebooted, you must configure the Modbus Address.
+                Additional spindle settings are applied in this step.
             </p>
-            <p>If you are one a modern grblHAL version this will automatically restart your controller</p>
-            <p>If you are an older version of grblHAL, you'll need to restart the controller using the switch manually.</p>
+            <ol className="list-decimal p-5 gap-4 space-y-2">
+                <li>
+                    Reconnect to your controller.
+                    Please ignore any alarms that pop-up.
+                </li>
+                <li>Press <b>"Apply and Restart"</b></li>
+            </ol>
             <StepActionButton
                 label="Configure Modbus"
                 runningLabel="Configuring..."

@@ -122,10 +122,6 @@ const StartFromLine = ({
                         if (payload.type === 'error') {
                             pubsub.publish('atc_validator', payload);
                             return;
-                        } else {
-                            console.log(
-                                'we warn but open the regular dialog with some special state',
-                            );
                         }
                     }
 

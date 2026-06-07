@@ -51,6 +51,10 @@ export const SettingSection = React.memo(function SettingSection({
                     curSetting.onUpdate();
                 }
 
+                if ('onChange' in curSetting) {
+                    curSetting.onChange(v);
+                }
+
                 return updated;
             });
         },
@@ -72,9 +76,10 @@ export const SettingSection = React.memo(function SettingSection({
                     {connected && Wizard && <Wizard />}
                 </legend>
             )}
-            {settings.map((setting) => {
+            {settings.map((setting, index) => {
                 return (
                     <SettingRow
+                        key={setting.globalIndex ?? setting.key ?? index}
                         setting={setting}
                         changeHandler={changeHandler}
                     />

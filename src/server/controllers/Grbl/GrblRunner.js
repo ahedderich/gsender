@@ -278,6 +278,11 @@ class GrblRunner extends events.EventEmitter {
         return `F${value}`;
     }
 
+    getCurrentSpindleRate(state = this.state) {
+        const value = _.get(state, 'parserstate.spindle');
+        return `${value}`;
+    }
+
     getParameters() {
         return _.get(this.settings, 'parameters', {});
     }
@@ -298,6 +303,10 @@ class GrblRunner extends events.EventEmitter {
 
     hasSettings() {
         return !_.isEmpty(this.settings.settings);
+    }
+
+    getSetting(key, defaultValue = '') {
+        return _.get(this.settings.settings, key, defaultValue);
     }
 }
 

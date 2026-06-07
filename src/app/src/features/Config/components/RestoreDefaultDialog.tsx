@@ -71,9 +71,11 @@ function restoreEEPROMDefaults(
         }
     }
     values.push('$$');
-    console.log(JSON.stringify(values));
-    const localSettings = { ...controller.settings };
-    console.log(JSON.stringify(localSettings));
+
+    if (type === 'grblHAL') {
+        values.push('$ES', '$ESH');
+    }
+
     controller.command('gcode', values);
 
 

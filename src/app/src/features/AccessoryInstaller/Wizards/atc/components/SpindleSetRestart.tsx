@@ -4,6 +4,8 @@ import controller from 'app/lib/controller.ts';
 import { useTypedSelector } from 'app/hooks/useTypedSelector.ts';
 import { RootState } from 'app/store/redux';
 import {StepProps} from "app/features/AccessoryInstaller/types";
+import { firmwarePastVersion } from 'app/lib/firmwareSemver.ts';
+import { SPINDLE_395_V7_VERSION } from 'app/features/ATC/utils/ATCiConstants.ts';
 
 export function SpindleSetRestart({ onComplete, onUncomplete }: StepProps) {
     const [isComplete, setIsComplete] = useState<boolean>(false);
@@ -28,7 +30,7 @@ export function SpindleSetRestart({ onComplete, onUncomplete }: StepProps) {
             '$374=3',
             '$375=50',
             '$681=0',
-            '$395=2',
+            `$395=${firmwarePastVersion(SPINDLE_395_V7_VERSION) ? '7' : '2'}`,
             '$REBOOT',
         ]);
     }
@@ -47,12 +49,17 @@ export function SpindleSetRestart({ onComplete, onUncomplete }: StepProps) {
     return (
         <div className="flex flex-col gap-5 justify-start">
             <p className="dark:text-white">
-                Your spindle must now be configured. This will require a reboot
-                before setting the modbus address.
+                Your spindle settings are applied in this step and the controller will restart automatically.
             </p>
+            <ol className="list-decimal p-5 gap-4 space-y-2">
+                <li>
+                    Press <b>"Apply And Restart"</b>
+                </li>
+                <li>Click <b>"Next"</b></li>
+            </ol>
             <StepActionButton
-                label="Setup Spindle and Reboot"
-                runningLabel="Configuring..."
+                label="Apply and Restart"
+                runningLabel="Applying..."
                 onApply={setupSpindleAndReboot}
                 isComplete={hasSetupSpindle}
                 error={error}

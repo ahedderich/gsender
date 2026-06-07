@@ -1,6 +1,9 @@
 import React from 'react';
+import { useDispatch } from 'react-redux';
+import pubsub from 'pubsub-js';
 import { useTypedSelector } from 'app/hooks/useTypedSelector';
 import { RootState } from 'app/store/redux';
+import { updateAccessibility } from 'app/store/redux/slices/preferences.slice';
 import { useActiveShortcuts } from 'app/lib/shortcutRegistry';
 import {
     GENERAL_CATEGORY,
@@ -17,6 +20,7 @@ import {
 } from 'app/constants';
 
 export const KeyboardMapOverlay: React.FC = () => {
+    const dispatch = useDispatch();
     const { showKeyboardMap } = useTypedSelector(
         (state: RootState) => state.preferences.accessibility,
     );
@@ -59,7 +63,19 @@ export const KeyboardMapOverlay: React.FC = () => {
                         <h2 className="text-2xl font-bold">Active Keyboard Shortcuts</h2>
                         <p className="text-sm text-white/60">Dynamic map of currently available shortcuts</p>
                     </div>
-                    <div className="text-xs bg-blue-600 px-2 py-1 rounded">Accessibility Overlay</div>
+                    <button
+                        onClick={() => {
+                            dispatch(updateAccessibility({ showKeyboardMap: false }));
+                            pubsub.publish('repopulate');
+                        }}
+                        className="text-white/60 hover:text-white hover:bg-white/10 rounded-lg p-1.5 transition-colors"
+                        aria-label="Close keyboard map"
+                    >
+                        <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <line x1="18" y1="6" x2="6" y2="18" />
+                            <line x1="6" y1="6" x2="18" y2="18" />
+                        </svg>
+                    </button>
                 </div>
                 {categories.map(category => {
                     const items = getShortcutsByCategory(category);
