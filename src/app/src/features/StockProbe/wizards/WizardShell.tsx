@@ -20,15 +20,18 @@ import {
 import { Button } from 'app/components/Button';
 import { useTypedSelector } from 'app/hooks/useTypedSelector';
 import { GRBL_ACTIVE_STATE_IDLE, GRBL_ACTIVE_STATE_ALARM } from 'app/constants';
+import { FeederStatus } from 'app/lib/definitions/sender_feeder';
 import { GRBL_ALARMS } from '../../../../../server/controllers/Grbl/constants';
 import controller from 'app/lib/controller';
 import ResultsStep from './ResultsStep';
 import { ProbeTask, WizardStep } from '../definitions';
+import { getSharedContextInjectionLines, setSharedProbeContext } from '../sharedProbeContext';
 
 interface ProbedDimensions {
     width?: number;
     length?: number;
     diameter?: number;
+    rotationAngle?: number;
 }
 
 interface Props {
@@ -44,7 +47,7 @@ interface Props {
     isRotation?: boolean;
     wcsIndex: number;
     probedDimensions?: ProbedDimensions;
-    onProbeComplete?: () => void;
+    onProbeComplete?: (vars: Record<string, number>) => void;
 }
 
 const STEP_LABELS: Record<WizardStep, string> = {
@@ -73,69 +76,35 @@ const WizardShell: React.FC<Props> = ({
     onProbeComplete,
 }) => {
     const [step, setStep] = useState<WizardStep>('intro');
-    const [wasExecuting, setWasExecuting] = useState(false);
     const [probeVerified, setProbeVerified] = useState(false);
     const [alarmCode, setAlarmCode] = useState<number | null>(null);
 
-    // Task tracking
     const [taskLabels, setTaskLabels] = useState<string[]>([]);
-    const [taskBoundaries, setTaskBoundaries] = useState<number[]>([]);
     const [currentTaskIdx, setCurrentTaskIdx] = useState(0);
-    // Set to true only after every GCode command in the batch has received its
-    // 'ok' acknowledgement. This prevents the wizard from advancing to the results
-    // step during transient Idle states that occur between individual probe moves
-    // (e.g. after the Z probe and before XY probing begins).
-    const [allCommandsAcked, setAllCommandsAcked] = useState(false);
 
-    // Refs for the serial-port listener — avoids the race condition where
-    // controller.command fires oks before useEffect can attach the listener.
-    const okCountRef        = useRef(0);
-    const totalCommandsRef  = useRef(0);
-    const boundariesRef     = useRef<number[]>([]);
-    const labelsRef         = useRef<string[]>([]);
-    const handleReadRef     = useRef<((data: string) => void) | null>(null);
+    // Refs for per-task execution tracking.
+    const tasksRef          = useRef<ProbeTask[]>([]);
+    const currentTaskIdxRef = useRef(0);
+    // Accumulates [MSG:KEY=VALUE] lines received during execution.
+    const msgVarsRef        = useRef<Record<string, number>>({});
+    // Mirror of `step` kept in sync via a useEffect so the completion effect can read the
+    // current step value without listing `step` as a dependency (which would trigger it on
+    // step→'executing' with stale feederStatus and cause a false-positive advance).
+    const stepRef           = useRef<WizardStep>('intro');
 
-    const attachTaskListener = (boundaries: number[], labels: string[]) => {
-        if (handleReadRef.current) {
-            controller.removeListener('serialport:read', handleReadRef.current);
-        }
-        okCountRef.current      = 0;
-        totalCommandsRef.current = boundaries.length > 0 ? boundaries[boundaries.length - 1] : 0;
-        boundariesRef.current   = boundaries;
-        labelsRef.current       = labels;
-
-        const handler = (data: string) => {
-            if (typeof data === 'string' && data.trim() === 'ok') {
-                okCountRef.current++;
-                const count = okCountRef.current;
-                const idx   = boundariesRef.current.findIndex((b) => count < b);
-                setCurrentTaskIdx(idx === -1 ? labelsRef.current.length - 1 : idx);
-                // All commands acknowledged — the batch is truly complete.
-                if (totalCommandsRef.current > 0 && count >= totalCommandsRef.current) {
-                    setAllCommandsAcked(true);
-                }
-            }
-        };
-        handleReadRef.current = handler;
-        controller.addListener('serialport:read', handler);
-    };
-
-    const detachTaskListener = () => {
-        if (handleReadRef.current) {
-            controller.removeListener('serialport:read', handleReadRef.current);
-            handleReadRef.current = null;
-        }
-        okCountRef.current = 0;
-    };
-
-    const { activeState, probePinStatus, isConnected, wpos, mpos, rawAlarmCode } = useTypedSelector((state) => ({
+    const { activeState, probePinStatus, isConnected, wpos, mpos, rawAlarmCode, feederStatus } = useTypedSelector((state) => ({
         activeState:    state.controller.state.status?.activeState ?? 'Idle',
         probePinStatus: state.controller.state.status?.pinState.P ?? false,
         isConnected:    state.connection.isConnected ?? false,
         wpos:           state.controller.state.status?.wpos ?? { x: '0.000', y: '0.000', z: '0.000' },
         mpos:           state.controller.mpos ?? { x: 0, y: 0, z: 0 },
         rawAlarmCode:   state.controller.state.status?.alarmCode ?? null,
+        feederStatus:   state.controller.feeder.status as FeederStatus | null,
     }));
+
+    // Keep stepRef in sync so the completion effect can read the current step via a ref
+    // instead of closing over the state value (which would require 'step' as a dependency).
+    useEffect(() => { stepRef.current = step; }, [step]);
 
     // Latch probe verification: once touched, stay verified until dialog resets
     useEffect(() => {
@@ -144,73 +113,93 @@ const WizardShell: React.FC<Props> = ({
         }
     }, [probePinStatus, step]);
 
+    // Mount-time listener: capture [MSG:KEY=VALUE] lines emitted by (MSG, KEY=VALUE) gcode.
+    useEffect(() => {
+        const handler = (data: string) => {
+            if (typeof data !== 'string') return;
+            const m = data.trim().match(/^\[MSG:([A-Za-z_]\w*)\s*=\s*([-\d.]+)\]$/);
+            if (m) msgVarsRef.current[m[1]] = parseFloat(m[2]);
+        };
+        controller.addListener('serialport:read', handler);
+        return () => controller.removeListener('serialport:read', handler);
+    }, []);
+
     // Detect alarm during probing → abort to failed step
     useEffect(() => {
         if (step === 'executing' && activeState === GRBL_ACTIVE_STATE_ALARM) {
-            detachTaskListener();
+            controller.command('probe:context:end');
             setAlarmCode(rawAlarmCode !== null ? Number(rawAlarmCode) : null);
             setStep('failed');
-            setWasExecuting(false);
         }
     }, [activeState, step, rawAlarmCode]);
 
-    // Detect GCode batch completion: idle after executing AND all commands acked.
-    // Requiring allCommandsAcked prevents premature completion during transient
-    // Idle states between individual probe moves (e.g. after Z probe, before XY).
+    // Per-task completion: feeder drained (queue === 0, not pending) AND machine idle.
+    //
+    // Intentionally excludes `step` from the dependency array. If `step` were listed, this
+    // effect would fire the moment step transitions to 'executing', at which point feederStatus
+    // still reflects the pre-submission state (queue === 0) — triggering a false advance.
+    // By using stepRef.current instead, the effect only re-runs when feederStatus or activeState
+    // actually changes, which is guaranteed to happen AFTER the server has received and begun
+    // processing the submitted gcode (feeder:status updates arrive ~500 ms after the server timer).
     useEffect(() => {
-        if (step === 'executing' && activeState !== GRBL_ACTIVE_STATE_IDLE) {
-            setWasExecuting(true);
+        if (
+            stepRef.current === 'executing' &&
+            feederStatus !== null &&
+            feederStatus.queue === 0 &&
+            !feederStatus.pending &&
+            activeState === GRBL_ACTIVE_STATE_IDLE
+        ) {
+            const tasks   = tasksRef.current;
+            const nextIdx = currentTaskIdxRef.current + 1;
+
+            if (nextIdx < tasks.length) {
+                currentTaskIdxRef.current = nextIdx;
+                setCurrentTaskIdx(nextIdx);
+                controller.command('gcode:safe', tasks[nextIdx].commands, 'G21');
+            } else {
+                controller.command('probe:context:end');
+                setStep('results');
+                setSharedProbeContext(msgVarsRef.current);
+                onProbeComplete?.(msgVarsRef.current);
+            }
         }
-        if (step === 'executing' && wasExecuting && activeState === GRBL_ACTIVE_STATE_IDLE && allCommandsAcked) {
-            detachTaskListener();
-            setStep('results');
-            setWasExecuting(false);
-            setAllCommandsAcked(false);
-            onProbeComplete?.();
-        }
-    }, [activeState, step, wasExecuting, allCommandsAcked]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [feederStatus, activeState]);
 
     const executeProbe = () => {
         const tasks = onExecute();
-        const labels = tasks.map((t) => t.label);
-        let total = 0;
-        // % variable assignments (e.g. %SP_Z=posz) are evaluated client-side and never
-        // forwarded to the firmware, so they produce no 'ok' response. Exclude them from
-        // the count to prevent allCommandsAcked from never firing.
-        const boundaries = tasks.map((t) => {
-            total += t.commands.filter((cmd) => !(cmd.startsWith('%') && cmd.includes('='))).length;
-            return total;
-        });
-        setTaskLabels(labels);
-        setTaskBoundaries(boundaries);
+        const injectionLines = getSharedContextInjectionLines();
+        if (injectionLines.length > 0 && tasks.length > 0) {
+            tasks[0] = { ...tasks[0], commands: [...injectionLines, ...tasks[0].commands] };
+        }
+        tasksRef.current          = tasks;
+        currentTaskIdxRef.current = 0;
+        msgVarsRef.current        = {};
+        setTaskLabels(tasks.map((t) => t.label));
         setCurrentTaskIdx(0);
-        setAllCommandsAcked(false);
-        attachTaskListener(boundaries, labels);
         setStep('executing');
-        setWasExecuting(false);
-        const allCommands = tasks.flatMap((t) => t.commands);
-        controller.command('gcode:safe', allCommands, 'G21');
+        controller.command('probe:context:start');
+        controller.command('gcode:safe', tasks[0].commands, 'G21');
     };
 
     const handleRetry = () => {
+        controller.command('probe:context:end');
+        tasksRef.current          = [];
+        currentTaskIdxRef.current = 0;
         setStep('intro');
-        setWasExecuting(false);
-        setAllCommandsAcked(false);
         setProbeVerified(false);
         setAlarmCode(null);
         setTaskLabels([]);
-        setTaskBoundaries([]);
         setCurrentTaskIdx(0);
     };
 
     const handleClose = () => {
+        tasksRef.current          = [];
+        currentTaskIdxRef.current = 0;
         setStep('intro');
-        setWasExecuting(false);
-        setAllCommandsAcked(false);
         setProbeVerified(false);
         setAlarmCode(null);
         setTaskLabels([]);
-        setTaskBoundaries([]);
         setCurrentTaskIdx(0);
         onClose();
     };
@@ -218,7 +207,6 @@ const WizardShell: React.FC<Props> = ({
     const canStart = !connectivityTest || probeVerified;
     const currentTaskLabel = taskLabels[currentTaskIdx] ?? '';
 
-    // Resolve alarm description from code
     const alarmInfo = alarmCode !== null
         ? (GRBL_ALARMS.find((a: { code: number }) => a.code === alarmCode) ?? null)
         : null;

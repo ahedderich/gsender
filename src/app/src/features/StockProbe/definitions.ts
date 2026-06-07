@@ -26,6 +26,7 @@ export type EdgeSelection = 'X+' | 'X-' | 'Y+' | 'Y-';
 export type SideSelection = 'top' | 'bottom' | 'left' | 'right';
 export type WizardStep = 'intro' | 'connectivity' | 'executing' | 'results' | 'failed';
 export type CornerSelection = 'BL' | 'TL' | 'TR' | 'BR';
+export type ProbeDirection = 'towards_center' | 'away_from_center';
 
 export interface StockProbeSettings {
     stockType: StockType;
@@ -40,6 +41,7 @@ export interface StockProbeSettings {
     retractDistance: number;
     connectivityTest: boolean;
     wcsIndex: number; // 1-6 → G54-G59
+    rotationEdgeOffset: number; // mm inset from each end of the probed side to avoid missing a rotated corner
     lastProbedWidth: number | null;
     lastProbedLength: number | null;
     lastProbedDiameter: number | null;
@@ -84,8 +86,13 @@ export interface EdgeProbeParams extends StockProbeGCodeParams {
 }
 
 export interface RotationProbeParams extends StockProbeGCodeParams {
+    measuringLength: number;
     stockWidth: number;
+    stockLength: number;
+    probingZHeight: number;
+    direction: ProbeDirection;
     side: SideSelection;
+    rotationEdgeOffset?: number; // mm inset from each end of the side, default 15
 }
 
 export const DEFAULT_SETTINGS: StockProbeSettings = {
@@ -101,6 +108,7 @@ export const DEFAULT_SETTINGS: StockProbeSettings = {
     retractDistance: 2,
     connectivityTest: true,
     wcsIndex: 1,
+    rotationEdgeOffset: 15,
     lastProbedWidth: null,
     lastProbedLength: null,
     lastProbedDiameter: null,

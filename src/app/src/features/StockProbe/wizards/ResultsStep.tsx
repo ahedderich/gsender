@@ -22,6 +22,7 @@ interface ProbedDimensions {
     width?: number;
     length?: number;
     diameter?: number;
+    rotationAngle?: number;
 }
 
 interface Props {
@@ -96,9 +97,17 @@ const ResultsStep: React.FC<Props> = ({
             )}
 
             {isRotation && (
-                <p className="text-sm text-gray-600 dark:text-gray-300 text-center">
-                    Rotation measurement complete. Adjust workholding based on the measured angle, then re-probe as needed.
-                </p>
+                <div className="w-full bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg p-3 text-sm text-center">
+                    <p className="text-gray-500 dark:text-gray-400 mb-1 text-xs">Measured Rotation Angle</p>
+                    {probedDimensions?.rotationAngle !== undefined ? (
+                        <p className="font-mono font-medium text-lg">{probedDimensions.rotationAngle.toFixed(3)}°</p>
+                    ) : (
+                        <p className="text-gray-400 italic">angle not available</p>
+                    )}
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
+                        Adjust workholding based on the measured angle, then re-probe as needed.
+                    </p>
+                </div>
             )}
 
             <div className="flex gap-2 mt-2">
