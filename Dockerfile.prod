@@ -1,4 +1,7 @@
-FROM node:24 AS builder
+# $BUILDPLATFORM = arm64 on your Mac. Builder runs natively so esbuild's Go binary
+# doesn't crash under QEMU. The JS/CSS output is platform-independent and gets
+# copied into the amd64 runtime stage below.
+FROM --platform=$BUILDPLATFORM node:24 AS builder
 
 WORKDIR /app
 
@@ -14,10 +17,18 @@ RUN cd src/app && yarn install
 
 COPY . .
 
+# Disable sourcemaps for the Docker build: vite.config.js hardcodes sourcemap:true
+# which drives ~3-4 GB of extra memory during chunk rendering. This patch only
+# affects the builder layer — your local vite.config.js is unchanged.
+RUN sed -i 's/sourcemap: true/sourcemap: false/' src/app/vite.config.js
+
+# vite:build hardcodes --max-old-space-size=8192 via cross-env, which OOMs in Docker.
+# Call vite directly with a lower cap, then replicate the postvite:build hook manually.
 RUN node scripts/package-sync.js && \
     yarn build-dev-css && \
     yarn build-prod-server && \
-    yarn vite:build && \
+    NODE_OPTIONS='--max-old-space-size=6144' yarn --cwd ./src/app build && \
+    bash -c "mkdir -p dist/gsender/app && cp -af src/app/favicon.ico src/app/images src/app/assets dist/gsender/app/ 2>/dev/null || true" && \
     yarn copy-css
 
 
@@ -25,12 +36,22 @@ FROM node:24-slim AS runtime
 
 WORKDIR /app
 
+# libopenjp2-tools: runtime dependency of gsender
+# python3 make g++ libudev-dev: needed to compile serialport and usb native modules
 RUN apt-get update && apt-get install -y \
     libopenjp2-tools \
+    git python3 make g++ libudev-dev \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/bin ./bin
+
+# Install production dependencies for the server (includes native modules serialport + usb).
+# Must run in the runtime stage so native modules are compiled for linux/amd64.
+WORKDIR /app/dist/gsender
+RUN yarn install --production --frozen-lockfile
+
+WORKDIR /app
 
 EXPOSE 8000
 
