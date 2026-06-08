@@ -1,0 +1,28 @@
+services:
+  gsender:
+    build:
+      context: ./
+      dockerfile: Dockerfile.prod
+      platforms:
+        - "linux/amd64"
+    image: ahedderich123/gsender:latest
+    ports:
+      - "0.0.0.0:8000:8000"  # Web UI
+    volumes:
+      - config-data:/app/config
+    working_dir: /app
+    command: node ./bin/gsender -p 8000 -c /app/config/.gsender_rc
+    privileged: true
+    networks:
+      - cnc-network
+    devices:
+      - /dev/ttyUSB0:/dev/ttyUSB0
+    restart: always
+
+networks:
+  cnc-network:
+    driver: bridge
+
+volumes:
+  config-data:
+  node_modules:

@@ -1,0 +1,39 @@
+# Run builder on the native build platform to avoid QEMU crashes with esbuild's Go binary.
+# The output (JS/CSS) is platform-independent and gets copied into the amd64 runtime stage.
+FROM --platform=$BUILDPLATFORM node:24 AS builder
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y \
+    libopenjp2-tools \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY package.json yarn.lock* bun.lock* ./
+RUN yarn install
+
+COPY src/app/package.json src/app/yarn.lock* ./src/app/
+RUN cd src/app && yarn install
+
+COPY . .
+
+RUN node scripts/package-sync.js && \
+    yarn build-dev-css && \
+    yarn build-prod-server && \
+    yarn vite:build && \
+    yarn copy-css
+
+
+FROM node:24-slim AS runtime
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y \
+    libopenjp2-tools \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/bin ./bin
+
+EXPOSE 8000
+
+CMD ["node", "./bin/gsender", "-p", "8000"]
