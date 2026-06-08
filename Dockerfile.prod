@@ -1,7 +1,7 @@
 # $BUILDPLATFORM = arm64 on your Mac. Builder runs natively so esbuild's Go binary
 # doesn't crash under QEMU. The JS/CSS output is platform-independent and gets
 # copied into the amd64 runtime stage below.
-FROM --platform=$BUILDPLATFORM node:24 AS builder
+FROM node:24 AS builder
 
 WORKDIR /app
 
