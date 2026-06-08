@@ -45,6 +45,10 @@ RUN apt-get update && apt-get install -y \
 
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/bin ./bin
+COPY --from=builder /app/package.json /app/yarn.lock* ./
+
+# Install root deps (includes cross-env, needed by `yarn start`).
+RUN yarn install --frozen-lockfile
 
 # Install production dependencies for the server (includes native modules serialport + usb).
 # Must run in the runtime stage so native modules are compiled for linux/amd64.
@@ -55,4 +59,4 @@ WORKDIR /app
 
 EXPOSE 8000
 
-CMD ["node", "./bin/gsender", "-p", "8000"]
+CMD ["yarn", "start"]
