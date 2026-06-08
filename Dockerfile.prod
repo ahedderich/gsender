@@ -1,6 +1,4 @@
-# Run builder on the native build platform to avoid QEMU crashes with esbuild's Go binary.
-# The output (JS/CSS) is platform-independent and gets copied into the amd64 runtime stage.
-FROM --platform=$BUILDPLATFORM node:24 AS builder
+FROM node:24 AS builder
 
 WORKDIR /app
 

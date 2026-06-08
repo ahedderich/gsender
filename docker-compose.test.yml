@@ -3,8 +3,6 @@ services:
     build:
       context: ./
       dockerfile: Dockerfile.prod
-      platforms:
-        - "linux/amd64"
     image: ahedderich123/gsender:latest
     ports:
       - "0.0.0.0:8000:8000"  # Web UI
