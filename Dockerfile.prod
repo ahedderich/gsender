@@ -16,6 +16,8 @@ RUN cd src/app && yarn install
 # affects the builder layer — your local vite.config.js is unchanged.
 RUN sed -i 's/sourcemap: true/sourcemap: false/' src/app/vite.config.js
 
+RUN yarn build-prod
+
 EXPOSE 8000
 
 CMD ["yarn", "start"]
