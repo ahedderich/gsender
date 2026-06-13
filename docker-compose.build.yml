@@ -9,7 +9,7 @@ services:
     volumes:
       - config-data:/app/config
     working_dir: /app
-    command: cross-env ./bin/gsender -c /app/config/.gsender_rc
+    command: yarn start -- -c /app/config/.gsender_rc
     privileged: true
     networks:
       - cnc-network
