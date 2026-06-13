@@ -71,6 +71,29 @@ const ConfirmationDialog = () => {
     }, [show]);
 
     useEffect(() => {
+        if (!show) return;
+
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                if (!hideConfirm && onConfirm !== null) {
+                    onConfirm();
+                }
+                setShow(false);
+            } else if (e.key === 'Escape') {
+                e.preventDefault();
+                if (!hideClose && onClose !== null) {
+                    onClose();
+                }
+                setShow(false);
+            }
+        };
+
+        document.addEventListener('keydown', handleKeyDown);
+        return () => document.removeEventListener('keydown', handleKeyDown);
+    }, [show, onConfirm, onClose, hideConfirm, hideClose]);
+
+    useEffect(() => {
         const token = pubsub.subscribe(
             'dialog:new',
             (_: string, options: DialogOptions) => {
@@ -93,7 +116,7 @@ const ConfirmationDialog = () => {
 
     return (
         <AlertDialog open={show}>
-            <AlertDialogContent className="bg-white">
+            <AlertDialogContent className="bg-white" onEscapeKeyDown={(e) => e.preventDefault()}>
                 <AlertDialogHeader>
                     <AlertDialogTitle>{title}</AlertDialogTitle>
                     <AlertDialogDescription>{content}</AlertDialogDescription>

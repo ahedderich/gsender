@@ -9,12 +9,12 @@ services:
     volumes:
       - config-data:/app/config
     working_dir: /app
-    command: node ./bin/gsender -p 8000 -c /app/config/.gsender_rc
+    command: cross-env ./bin/gsender -c /app/config/.gsender_rc
     privileged: true
     networks:
       - cnc-network
-    devices:
-      - /dev/ttyUSB0:/dev/ttyUSB0
+#    devices:
+#      - /dev/ttyUSB0:/dev/ttyUSB0
     restart: always
 
 networks:
