@@ -77,6 +77,7 @@ import {
     GENERAL_CATEGORY,
     VISUALIZER_CATEGORY,
     OVERRIDES_CATEGORY,
+    LIGHTWEIGHT_OPTIONS,
 } from '../../constants';
 import { CAMERA_MODE_PAN, CAMERA_MODE_ROTATE } from './constants';
 import { getVisualizerTheme } from 'app/lib/getVisualizerTheme';
@@ -88,6 +89,10 @@ import { Actions, State } from './definitions';
 interface Views {
     type: 'isometric' | 'top' | 'front' | 'right' | 'left' | 'default';
 }
+
+const debouncedThemeChange = debounce(() => {
+    pubsub.publish('visualizer:redraw');
+}, 500);
 
 class Visualizer extends Component {
     static propTypes = {
@@ -267,6 +272,43 @@ class Visualizer extends Component {
                 };
 
                 if (!capable.view3D) {
+                    let interval = setInterval(() => {
+                        if (this.actions.checkVisualizerRef()) {
+                            clearInterval(interval);
+
+                            this.visualizer.load(
+                                name,
+                                vizualization,
+                                ({ bbox }) => {
+                                    // Set gcode bounding box
+                                    controller.context = {
+                                        ...controller.context,
+                                        xmin: bbox.min.x,
+                                        xmax: bbox.max.x,
+                                        ymin: bbox.min.y,
+                                        ymax: bbox.max.y,
+                                        zmin: bbox.min.z,
+                                        zmax: bbox.max.z,
+                                    };
+
+                                    const { port } = this.state;
+
+                                    this.setState((state) => ({
+                                        gcode: {
+                                            ...state.gcode,
+                                            loading: false,
+                                            rendering: false,
+                                            ready: true,
+                                            bbox: bbox,
+                                            loadedBeforeConnection: !port,
+                                        },
+                                        filename: name,
+                                        fileSize: size,
+                                    }));
+                                },
+                            );
+                        }
+                    }, 100);
                     return;
                 }
 
@@ -535,7 +577,7 @@ class Visualizer extends Component {
             },
         },
         handleLiteModeToggle: () => {
-            const { liteMode } = this.state;
+            const { liteMode, liteOption } = this.state;
             const { isFileLoaded } = this.props;
             const newLiteModeValue = !liteMode;
 
@@ -544,10 +586,21 @@ class Visualizer extends Component {
                 minimizeRenders: newLiteModeValue,
             });
 
+            // Write to store immediately so shouldVisualize() returns the correct value
+            // when VisualizerWrapper.componentDidUpdate fires (child before parent in React's
+            // bottom-up lifecycle, before index.tsx's own componentDidUpdate updates the store).
+            this.config.set('liteMode', newLiteModeValue);
+
             // instead of calling loadGCode right away,
             // use this pubsub to invoke a refresh of the visualizer wrapper.
             // this removes visual glitches that would otherwise appear.
-            pubsub.publish('litemode:change', isFileLoaded);
+            const wasInEverythingMode =
+                liteMode && liteOption === LIGHTWEIGHT_OPTIONS.EVERYTHING;
+            pubsub.publish('litemode:change', {
+                isFileLoaded,
+                enteringLiteMode: newLiteModeValue,
+                wasInEverythingMode,
+            });
         },
         lineWarning: {
             onContinue: () => {
@@ -592,6 +645,9 @@ class Visualizer extends Component {
         },
         getHull: () => {
             return this.visualizer.getToolpathHull();
+        },
+        checkVisualizerRef: () => {
+            return this.visualizer !== null;
         },
     };
 
@@ -793,6 +849,7 @@ class Visualizer extends Component {
             },
             disabled: this.config.get('disabled', false),
             disabledLite: this.config.get('disabledLite'),
+            liteOption: this.config.get('liteOption'),
             liteMode: this.config.get('liteMode'),
             minimizeRenders: this.config.get('minimizeRenders'),
             projection: this.config.get('projection', 'orthographic'),
@@ -1336,22 +1393,26 @@ class Visualizer extends Component {
 
     subscribe() {
         const tokens = [
-            pubsub.subscribe('theme:change', (msg) => {
-                const theme = this.config.get('theme', 'dark');
+            pubsub.subscribe('theme:change', (_msg, themeType) => {
+                const theme = themeType || this.config.get('theme', 'dark');
+                if (theme === this.state.theme) {
+                    return;
+                }
                 this.setState(
                     {
                         theme: theme,
+                        currentTheme: getVisualizerTheme(theme),
                     },
-                    this.setState({
-                        currentTheme: getVisualizerTheme(),
-                    }),
-                    pubsub.publish('visualizer:redraw'),
+                    () => {
+                        debouncedThemeChange();
+                    },
                 );
             }),
             pubsub.subscribe('visualizer:settings', () => {
                 this.setState({
                     disabled: this.config.get('disabled'),
                     disabledLite: this.config.get('disabledLite'),
+                    liteOption: this.config.get('liteOption'),
                     objects: this.config.get('objects'),
                     minimizeRenders: this.config.get('minimizeRenders'),
                     jobEndModal: this.config.get('jobEndModal'),

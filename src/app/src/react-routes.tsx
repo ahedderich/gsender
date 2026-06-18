@@ -299,10 +299,7 @@ export const ReactRoutes = () => {
                     element={
                         <div className="flex flex-col justify-center gap-8 p-4">
                             <div>
-                                <MachineInfoDisplay
-                                    pinned
-                                    setPinned={noop}
-                                />
+                                <MachineInfoDisplay pinned setPinned={noop} />
                             </div>
 
                             <div>
@@ -319,7 +316,7 @@ export const ReactRoutes = () => {
                                 <Probe />
                             </RemoteWidget>
                             <RemoteWidget label="Macros">
-                                <Macros />
+                                <Macros isRemote />
                             </RemoteWidget>
                             <RemoteWidget label="Spindle">
                                 <Spindle />
@@ -339,6 +336,14 @@ export const ReactRoutes = () => {
                         <div className="flex flex-col gap-48 mt-12 relative">
                             <FileControl />
                             <JobControl />
+                        </div>
+                    }
+                />
+                <Route
+                    path="config"
+                    element={
+                        <div className="flex max-h-4/5 overflow-y-clip items-center justify-center no-scrollbar">
+                            <Config />
                         </div>
                     }
                 />

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router';
 import {
     Card,
@@ -16,6 +16,7 @@ import cn from 'classnames';
 import OffsetManagementWidget from 'app/features/ATC/components/Configuration/components/OffsetManagement.tsx';
 import { Spinner } from 'app/components/shadcn/Spinner';
 import {
+    AlertTriangle,
     ArrowRight,
     BookOpen,
     CheckCircle2,
@@ -29,9 +30,10 @@ import {
 export interface ConfigTabProps {
     uploading: boolean;
     uploadError?: string;
+    macroReadFailed?: boolean;
 }
 
-export const ConfigTab: React.FC = ({ uploading, uploadError }: ConfigTabProps) => {
+export const ConfigTab: React.FC = ({ uploading, uploadError, macroReadFailed }: ConfigTabProps) => {
     const navigate = useNavigate();
     const {
         config,
@@ -41,6 +43,14 @@ export const ConfigTab: React.FC = ({ uploading, uploadError }: ConfigTabProps) 
         setWorkspacePosition,
         status,
     } = useConfigContext();
+
+    const [forkSpacingStr, setForkSpacingStr] = useState<string>(
+        () => String(config.variables._tc_slot_offset.value),
+    );
+
+    useEffect(() => {
+        setForkSpacingStr(String(config.variables._tc_slot_offset.value));
+    }, [config.variables._tc_slot_offset.value]);
 
     const nonDefaultStyling = 'bg-yellow-50 dark:bg-yellow-900/20';
     const labelClass = 'text-xs font-semibold text-gray-500 dark:text-white';
@@ -408,26 +418,33 @@ export const ConfigTab: React.FC = ({ uploading, uploadError }: ConfigTabProps) 
                                             type="number"
                                             step="any"
                                             wrapperClassName="w-auto"
-                                            value={
-                                                config.variables._tc_slot_offset
-                                                    .value
-                                            }
+                                            value={forkSpacingStr}
                                             onChange={(e) =>
-                                                updateConfig({
-                                                    variables: {
-                                                        ...config.variables,
-                                                        _tc_slot_offset: {
-                                                            ...config.variables
-                                                                ._tc_slot_offset,
-                                                            value:
-                                                                parseFloat(
-                                                                    e.target
-                                                                        .value,
-                                                                ) || 0,
-                                                        },
-                                                    },
-                                                })
+                                                setForkSpacingStr(e.target.value)
                                             }
+                                            onBlur={() => {
+                                                const parsed = parseFloat(forkSpacingStr);
+                                                if (!isNaN(parsed)) {
+                                                    updateConfig({
+                                                        variables: {
+                                                            ...config.variables,
+                                                            _tc_slot_offset: {
+                                                                ...config.variables._tc_slot_offset,
+                                                                value: parsed,
+                                                            },
+                                                        },
+                                                    });
+                                                } else {
+                                                    setForkSpacingStr(
+                                                        String(config.variables._tc_slot_offset.value),
+                                                    );
+                                                }
+                                            }}
+                                            onKeyDown={(e) => {
+                                                if (e.key === 'Enter') {
+                                                    e.currentTarget.blur();
+                                                }
+                                            }}
                                             className="h-7 w-16 text-xs border-gray-300 dark:border-slate-600 dark:bg-slate-900 dark:text-white focus:border-blue-500 focus:ring-blue-500 shrink-0 ml-auto"
                                         />
                                     </div>
@@ -473,11 +490,20 @@ export const ConfigTab: React.FC = ({ uploading, uploadError }: ConfigTabProps) 
                             {uploadError}
                         </p>
                     )}
+
+                    {macroReadFailed && !uploading && (
+                        <div className="flex items-start gap-2 rounded-md border border-amber-400 bg-amber-50 dark:bg-amber-950/40 dark:border-amber-700 px-3 py-2 text-xs text-amber-800 dark:text-amber-300">
+                            <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                            <p>
+                                Unable to read board config (<code>ATCI.macro</code>). Ensure the file exists and SD card is installed — apply disabled.
+                            </p>
+                        </div>
+                    )}
                 </div>
 
                 {/* Apply Button - 40% */}
                 <div className="w-2/5 flex items-center justify-end">
-                    <Button onClick={applyConfig} disabled={uploading}>
+                    <Button onClick={applyConfig} disabled={uploading || !!macroReadFailed}>
                         {uploading ? 'Applying...' : 'Apply'}
                     </Button>
                 </div>

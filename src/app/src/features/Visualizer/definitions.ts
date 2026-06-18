@@ -143,7 +143,7 @@ export interface State {
     cameraMode: CAMERA_MODES_T;
     cameraPosition: CAMERA_POSITIONS_T; // 'Top', '3D', 'Front', 'Left', 'Right'
     isAgitated: boolean; // Defaults to false
-    currentTheme: THEMES_T;
+    currentTheme: Map<string, string>;
     currentTab: number;
     filename: string;
     fileSize: number; //in bytes

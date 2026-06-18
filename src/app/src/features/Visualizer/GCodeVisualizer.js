@@ -61,11 +61,7 @@ class GCodeVisualizer {
         return this;
     }
 
-    render(
-        { vertices, frames, isLaser = false },
-        colorArray,
-        savedColors,
-    ) {
+    render({ vertices, frames, isLaser = false }, colorArray, savedColors) {
         this.vertices = new THREE.BufferAttribute(vertices, 3);
         this.frames = frames;
         this.isLaser = isLaser;
@@ -197,12 +193,18 @@ class GCodeVisualizer {
                     );
                     colorAttr.addUpdateRange({
                         start: offsetIndex,
-                        count: colorArray.length + placeHolderArray.length + bufferColorArray.length,
+                        count:
+                            colorArray.length +
+                            placeHolderArray.length +
+                            bufferColorArray.length,
                     });
                 } else {
                     // if not finished, continue colouring yellow
                     colorAttr.set([...bufferColorArray], bufferOffsetIndex);
-                    colorAttr.addUpdateRange({ start: bufferOffsetIndex, count: bufferColorArray.length });
+                    colorAttr.addUpdateRange({
+                        start: bufferOffsetIndex,
+                        count: bufferColorArray.length,
+                    });
                 }
                 colorAttr.needsUpdate = true;
             } else {
@@ -372,7 +374,10 @@ class GCodeVisualizer {
                     bufferColorArray.length +
                     this.plannedColorArray.length;
             }
-            colorAttr.addUpdateRange({ start: offsetIndex, count: updateCount });
+            colorAttr.addUpdateRange({
+                start: offsetIndex,
+                count: updateCount,
+            });
             colorAttr.needsUpdate = true;
         }
 

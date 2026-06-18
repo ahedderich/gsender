@@ -30,7 +30,7 @@ import { store as reduxStore } from 'app/store/redux';
 import controller from 'app/lib/controller';
 import manualToolChange from 'app/wizards/manualToolchange';
 import semiautoToolChange from 'app/wizards/semiautoToolchange';
-import automaticToolChange from 'app/wizards/automaticToolchange';
+import { determineFixedSensorInstructions } from 'app/lib/toolChangeUtils';
 import { Confirm } from 'app/components/ConfirmationDialog/ConfirmationDialogLib';
 // TODO: add worker types
 // @ts-ignore
@@ -225,6 +225,8 @@ export function* initialize(): Generator<any, void, any> {
     ) => {
         const reduxState = reduxStore.getState();
         const isLaser = isLaserMode();
+        // Keep SVG path generation tied to lightweight option selection so
+        // users can switch to SVG view instantly after a file is loaded.
         const shouldIncludeSVG = shouldVisualizeSVG();
         const profileWorker = store.get(
             'widgets.visualizer.debug.profileWorker',
@@ -553,11 +555,11 @@ export function* initialize(): Generator<any, void, any> {
 
     controller.addListener(
         'serialport:close',
-        (options: SerialPortOptions, _received: number) => {
+        (_options: SerialPortOptions, _received: number) => {
             reduxStore.dispatch(clearSpindles());
             // Reset homing run flag to prevent rapid position without running homing
             reduxStore.dispatch(resetHoming());
-            reduxStore.dispatch(closeConnection({ port: options.port }));
+            reduxStore.dispatch(closeConnection());
 
             pubsub.publish('machine:disconnected');
         },
@@ -565,12 +567,12 @@ export function* initialize(): Generator<any, void, any> {
 
     controller.addListener(
         'serialport:closeController',
-        (_options: SerialPortOptions, received: number) => {
+        (_options: SerialPortOptions, currentLineRunning: number) => {
             // if the connection was closed unexpectedly (not by the user),
             // the number of lines sent will be defined.
             // create a pop up so the user can connect to the last active port
             // and resume from the last line
-            if (received) {
+            if (currentLineRunning) {
                 const homingEnabled: string = _get(
                     reduxStore.getState(),
                     'controller.settings.settings.$22',
@@ -582,7 +584,7 @@ export function* initialize(): Generator<any, void, any> {
                         : 'The machine connection has been disrupted. To attempt to reconnect to the last active port, ' +
                           'press Resume. After that, you can set your Workspace 0 and use the Start From Line function to continue the job. ' +
                           'Suggested line to start from: ' +
-                          received;
+                          currentLineRunning;
 
                 const content = (
                     <div>
@@ -600,7 +602,7 @@ export function* initialize(): Generator<any, void, any> {
                         connectToLastDevice(() => {
                             // prompt recovery, either with homing or a prompt to start from line
                             pubsub.publish('disconnect:recovery', {
-                                received,
+                                currentLineRunning,
                                 homingEnabled,
                             });
                         });
@@ -623,48 +625,58 @@ export function* initialize(): Generator<any, void, any> {
         },
     );
 
-    controller.addListener('gcode:toolChange', (context: any, comment = '') => {
-        const payload = {
-            context,
-            comment,
-        };
-        const skipDialog = store.get('workspace.toolChange.skipDialog', false);
+    controller.addListener(
+        'gcode:toolChange',
+        async (context: any, comment = '') => {
+            const payload = {
+                context,
+                comment,
+            };
+            const skipDialog = store.get(
+                'workspace.toolChange.skipDialog',
+                false,
+            );
 
-        const { option, count } = context;
-        if (option === 'Pause') {
-            const msg = 'Toolchange pause' + (comment ? ` - ${comment}` : '');
-            if (!skipDialog) {
-                toast.info(msg, { position: 'bottom-right' });
-            }
-        } else {
-            let title, instructions;
-
-            if (option === 'Standard Re-zero') {
-                title = 'Standard Re-zero Tool Change';
-                instructions = manualToolChange;
-            } else if (option === 'Flexible Re-zero') {
-                title = 'Flexible Re-zero Tool Change';
-                instructions = semiautoToolChange(count)
-            } else if (option === 'Fixed Tool Sensor') {
-                title = 'Fixed Tool Sensor Tool Change';
-                instructions = automaticToolChange(count);
+            const { option, count } = context;
+            if (option === 'Pause') {
+                const msg =
+                    'Toolchange pause' + (comment ? ` - ${comment}` : '');
+                if (!skipDialog) {
+                    toast.info(msg, { position: 'bottom-right' });
+                }
             } else {
-                console.error('Invalid toolchange option passed');
-                return;
-            }
+                let title, instructions;
 
-            // Run start block on idle if exists
-            if (instructions.onStart) {
-                const onStart = instructions.onStart();
-                controller.command('wizard:start', onStart);
+                if (option === 'Standard Re-zero') {
+                    title = 'Standard Re-zero Tool Change';
+                    instructions = manualToolChange;
+                } else if (option === 'Flexible Re-zero') {
+                    title = 'Flexible Re-zero Tool Change';
+                    instructions = semiautoToolChange(count);
+                } else if (option === 'Fixed Tool Sensor') {
+                    title = 'Fixed Tool Sensor Tool Change';
+                    instructions = await determineFixedSensorInstructions(
+                        count,
+                        comment,
+                    );
+                } else {
+                    console.error('Invalid toolchange option passed');
+                    return;
+                }
+
+                if (instructions.onStart) {
+                    const onStart = instructions.onStart();
+                    controller.command('wizard:start', onStart);
+                }
+
+                pubsub.publish('wizard:load', {
+                    ...payload,
+                    title,
+                    instructions,
+                });
             }
-            pubsub.publish('wizard:load', {
-                ...payload,
-                title,
-                instructions,
-            });
-        }
-    });
+        },
+    );
 
     controller.addListener('toolchange:preHookComplete', (comment = '') => {
         const onConfirmhandler = () => {
@@ -802,12 +814,12 @@ export function* initialize(): Generator<any, void, any> {
         // estimateWorker?.terminate();
     });
 
-    // pubsub.subscribe(
-    //     'reparseGCode',
-    //     (_msg: string, { content, size, name, visualizer }) => {
-    //         parseGCode(content, size, name, visualizer);
-    //     },
-    // );
+    pubsub.subscribe(
+        'reparseGCode',
+        (_msg: string, { content, size, name, visualizer }) => {
+            parseGCode(content, size, name, visualizer);
+        },
+    );
 
     controller.addListener('workflow:pause', (opts: { data: string }) => {
         const { data } = opts;
@@ -993,7 +1005,8 @@ export function* initialize(): Generator<any, void, any> {
     });
 
     controller.addListener('spindle:add', (spindle: Spindle) => {
-        if (Object.hasOwn(spindle, 'id')) {
+        console.log(spindle);
+        if (Object.hasOwn(spindle, 'id') && spindle.id !== null) {
             reduxStore.dispatch(addSpindle(spindle));
         }
     });
@@ -1018,7 +1031,7 @@ export function* initialize(): Generator<any, void, any> {
                 Confirm({
                     title: payload.message,
                     content: payload.description,
-                    confirmLabel: 'Continue',
+                    confirmLabel: 'Resume',
                     cancelLabel: 'Reset',
                     onConfirm: () => {
                         controller.command('cyclestart');

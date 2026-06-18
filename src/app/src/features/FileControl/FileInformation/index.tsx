@@ -67,6 +67,12 @@ const FileInformation: React.FC<Props> = ({ handleRecentFileUpload }) => {
                     setShowEditor(isVisible);
                 },
             ),
+            pubsub.subscribe('outline:start', () => {
+                setShowEditor(false);
+            }),
+            pubsub.subscribe('macro:run', () => {
+                setShowEditor(false);
+            }),
         ];
         return () => {
             tokens.forEach((token) => {
@@ -114,9 +120,15 @@ const FileInformation: React.FC<Props> = ({ handleRecentFileUpload }) => {
                                                 tabIndex={0}
                                                 aria-label={`Load recent file ${file.fileName}`}
                                                 onKeyDown={(e) => {
-                                                    if (e.key === 'Enter' || e.key === ' ') {
+                                                    if (
+                                                        e.key === 'Enter' ||
+                                                        e.key === ' '
+                                                    ) {
                                                         e.preventDefault();
-                                                        handleRecentFileUpload(file, true);
+                                                        handleRecentFileUpload(
+                                                            file,
+                                                            true,
+                                                        );
                                                     }
                                                 }}
                                                 onClick={() =>

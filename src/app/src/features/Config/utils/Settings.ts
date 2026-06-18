@@ -140,13 +140,18 @@ export function matchesSearchTerm(o: FilteredEEPROM[], term = '') {
 
 export function generateSenderSettings(settings: gSenderSetting[]) {
     const dirtySettings: {
-        [key: string]: { value: gSenderSettingsValues; onUpdate: () => void };
+        [key: string]: {
+            value: gSenderSettingsValues;
+            onUpdate?: () => void;
+            onApply?: () => void;
+        };
     } = {};
     settings.map((s) => {
         if (s.dirty) {
             dirtySettings[s.key] = {
                 value: s.value,
                 onUpdate: s.onUpdate || null,
+                onApply: s.onApply || null,
             };
             s.dirty = false;
         }
@@ -178,6 +183,9 @@ export function updateAllSettings(
             store.set(k, settingsToUpdate[k].value);
             if (settingsToUpdate[k].onUpdate) {
                 settingsToUpdate[k].onUpdate();
+            }
+            if (settingsToUpdate[k].onApply) {
+                settingsToUpdate[k].onApply();
             }
         });
         toast.success(`Updated ${updateableSettingsNumber} settings.`, {

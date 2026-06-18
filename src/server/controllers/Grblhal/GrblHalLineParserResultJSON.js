@@ -10,6 +10,8 @@ class GrblHalLineParserResultJSON {
             code: r[1]
         };
 
+        console.log(payload);
+
         return {
             type: GrblHalLineParserResultJSON,
             payload: payload

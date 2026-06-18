@@ -89,9 +89,9 @@ const JobControl: React.FC<JobControlProps> = ({
         const tokens = [
             pubsub.subscribe(
                 'disconnect:recovery',
-                (_msg: string, { received }) => {
-                    if (received) {
-                        setLastLine(received);
+                (_msg: string, { currentLineRunning }) => {
+                    if (currentLineRunning) {
+                        setLastLine(currentLineRunning);
                     }
                 },
             ),
@@ -107,7 +107,7 @@ const JobControl: React.FC<JobControlProps> = ({
     };
 
     const onStop = () => {
-        setLastLine(senderStatus?.received);
+        setLastLine(senderStatus?.currentLineRunning);
     };
 
     const validateFileForATC = (): [

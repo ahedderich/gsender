@@ -217,7 +217,7 @@ self.onmessage = ({ data }) => {
             // No cutting moves found — fall back to regular square
             return getSimpleOutline();
         }
-        console.log('bounds', xmin, xmax, ymin, ymax);
+
         return buildOutlineFromPoints([
             [xmin.toFixed(3), ymin.toFixed(3)],
             [xmin.toFixed(3), ymax.toFixed(3)],

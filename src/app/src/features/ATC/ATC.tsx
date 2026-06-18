@@ -6,6 +6,7 @@ import { ATCStartValidations } from 'app/features/ATC/components/ATCStartValidat
 import pubsub from 'pubsub-js';
 import { useTypedSelector } from 'app/hooks/useTypedSelector';
 import { getATCUnavailablePayload } from 'app/features/ATC/utils';
+import {ATCUnavailable} from "app/features/ATC/components/ATCUnavailable.tsx";
 
 export function ATC() {
     const { atcAvailable, connected } = useToolChange();
@@ -29,9 +30,9 @@ export function ATC() {
         isHomed: isHomed,
     });
 
-    /*if (unavailableATCPayload !== null) {
+    if (unavailableATCPayload !== null) {
         return <ATCUnavailable payload={unavailableATCPayload} />;
-    }*/
+    }
 
     return (
         <div className="w-full h-full box-border">

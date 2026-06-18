@@ -41,6 +41,7 @@ import ensurePositiveNumber from '../../lib/ensure-positive-number';
 import evaluateAssignmentExpression from '../../lib/evaluate-assignment-expression';
 import logger from '../../lib/logger';
 import translateExpression from '../../lib/translate-expression';
+import { extractRealtimeCommands } from '../../lib/extract-realtime-commands';
 import config from '../../services/configstore';
 import monitor from '../../services/monitor';
 import taskRunner from '../../services/taskrunner';
@@ -64,7 +65,8 @@ import {
     GRBL_HAL_ACTIVE_STATE_IDLE,
     GRBL_HAL_ACTIVE_STATE_CHECK,
     GRBL_HAL_ACTIVE_STATE_RUN,
-    GRBL_HAL_ACTIVE_STATE_ALARM
+    GRBL_HAL_ACTIVE_STATE_ALARM,
+    ATCI_SUPPORTED_VERSION,
 } from './constants';
 import {
     METRIC_UNITS,
@@ -118,7 +120,7 @@ class GrblHalController {
         },
         close: (err) => {
             this.ready = false;
-            const received = this.sender?.state?.received;
+            const currentLineRunning = this.sender?.state?.totalSentToQueue - this.sender?.state?.countdownQueue.length;
             if (err) {
                 log.warn(`Disconnected from serial port "${this.options.port}":`, err);
             }
@@ -130,7 +132,7 @@ class GrblHalController {
 
                 // Destroy controller
                 this.destroy();
-            }, received);
+            }, currentLineRunning);
         },
         error: (err) => {
             this.ready = false;
@@ -255,6 +257,9 @@ class GrblHalController {
 
         // Connection
         this.connection = connection;
+        if (!this.connection) {
+            throw new Error('connection must be specified');
+        }
 
         this.connection.setWriteFilter((data) => {
             let line;
@@ -305,7 +310,6 @@ class GrblHalController {
                 line = line.replace(commentMatcher, '').trim();
                 const ignoreEvent = context ? context.ignoreEvent : true;
                 context = this.populateContext(context);
-
                 // We don't want some of these events firing if updating EEPROM in a macro - super edge case.
                 const looksLikeEEPROM = line.charAt(0) === '$';
 
@@ -352,6 +356,13 @@ class GrblHalController {
 
                 // line="G0 X[posx - 8] Y[ymax]"
                 // > "G0 X2 Y50"
+
+                // [\xNN] realtime-command tokens — write immediately, strip from line
+                { const { line: rtLine, realtimeCmds } = extractRealtimeCommands(line);
+                    realtimeCmds.forEach(cmd => this.connection.writeImmediate(cmd));
+                    line = rtLine;
+                    if (!line) return ''; }
+
                 line = translateExpression(line, context);
                 const data = parser.parseLine(line, { flatten: true });
                 const words = ensureArray(data.words);
@@ -387,7 +398,7 @@ class GrblHalController {
                             data: 'M6',
                             comment: commentString
                         }); // Hold reason
-                        line = line.replace('M6', '(M6)');
+                        line = line.replace(/M0*6(?!\d)/i, '(M6)');
                     }
                 }
 
@@ -455,10 +466,18 @@ class GrblHalController {
                 let commentMatcher = /\s*;.*/g;
                 let bracketCommentLine = /\([^\)]*\)/gm;
                 let toolCommand = /(T)(-?\d*\.?\d+\.?)/;
-                line = line.replace(bracketCommentLine, '').trim();
-                let comment = line.match(commentMatcher);
-                let commentString = (comment && comment[0].length > 0) ? comment[0].trim().replace(';', '') : '';
-                line = line.replace(commentMatcher, '').replace('/uFEFF', '').trim();
+                const commentRegex = /\(([^)]*)\)|;(.*)/g;
+                const commentParts = [];
+                let m;
+                while ((m = commentRegex.exec(line)) !== null) {
+                    const text = (m[1] !== undefined ? m[1] : m[2]).trim();
+                    if (text) commentParts.push(text);
+                }
+                let commentString = commentParts.join(' ');
+                if (line[0] !== '%') {
+                    line = line.replace(bracketCommentLine, '').trim();
+                    line = line.replace(commentMatcher, '').replace('/uFEFF', '').trim();
+                }
                 context = this.populateContext(context);
 
                 const { sent, received } = this.sender.state;
@@ -492,12 +511,16 @@ class GrblHalController {
                             this.workflow.pause({ data: 'M0', comment: commentString });
                             this.command('gcode', `${WAIT}\n${PAUSE_START} ;${commentString}`, { ignoreEvent: false });
                         }
-                        line = line.replace('M0', '(M0)');
+                        // This regex is required since M00 (or M01, M06, etc) are valid gcode commands that
+                        // some CAM programs issue. We normalize the line to M0 using `parseLine` for
+                        // comparison's sake but the line sent to the controller hasn't been normalized
+                        // and could still contain leading 0's
+                        line = line.replace(/M0+(?!\d)/i, '(M0)');
                     } else if (programMode === 'M1') {
                         log.debug(`M1 Program Pause: line=${sent + 1}, sent=${sent}, received=${received}`);
                         this.workflow.pause({ data: 'M1', comment: commentString });
                         this.command('gcode', `${WAIT}\n${PAUSE_START} ;${commentString}`, { ignoreEvent: false });
-                        line = line.replace('M1', '(M1)');
+                        line = line.replace(/M0*1(?!\d)/i, '(M1)');
                     }
                 }
 
@@ -513,17 +536,21 @@ class GrblHalController {
 
                     const currentState = _.get(this.state, 'status.activeState', '');
                     if (currentState === 'Check') {
-                        return line.replace('M6', '(M6)');
+                        return line.replace(/M0*6(?!\d)/i, '(M6)');
                     }
 
                     let tool = line.match(toolCommand);
                     log.debug('Found tool');
+                    let toolLabel = tool?.[0] || null;
+                    let toolNumber = tool?.[2] || null;
                     if (tool && this.toolChangeContext.mappings) {
                         const remap = _.get(this.toolChangeContext.mappings, tool[2], null);
 
                         if (remap) {
                             log.debug(`Mapping ${tool} to T${remap}`);
                             line = line.replace(tool[0], `T${remap}`);
+                            toolLabel = `T${remap}`;
+                            toolNumber = String(remap);
                         } else {
                             log.debug(`no remap found for ${tool}`);
                         }
@@ -532,9 +559,6 @@ class GrblHalController {
                     // Handle specific cases for macro and pause, ignore is default and comments line out with no other action
                     // If toolchange is at very beginning of file, ignore it
                     if (toolChangeOption !== 'Ignore') {
-                        if (tool) {
-                            commentString = `(${tool?.[0]}) ` + commentString;
-                        }
                         this.workflow.pause({ data: 'M6', comment: commentString });
 
                         if (toolChangeOption === 'Code') {
@@ -547,13 +571,13 @@ class GrblHalController {
 
                             this.toolChanger.addInterval(() => {
                                 // Emit the current state so latest tool info is available
-                                this.runner.setTool(tool?.[2]); // set tool in runner state
-                                this.emit('controller:state', GRBLHAL, this.state, tool?.[2]); // set tool in redux
+                                this.runner.setTool(toolNumber); // set tool in runner state
+                                this.emit('controller:state', GRBLHAL, this.state, toolNumber); // set tool in redux
                                 this.emit('gcode:toolChange', {
                                     line: sent + 1,
                                     count,
                                     block: line,
-                                    tool: tool,
+                                    tool: toolLabel,
                                     option: toolChangeOption
                                 }, commentString);
                             });
@@ -562,7 +586,7 @@ class GrblHalController {
 
                     const passthroughM6 = _.get(this.toolChangeContext, 'passthrough', false);
                     if (!passthroughM6 || toolChangeOption === 'Code') {
-                        line = line.replace('M6', '(M6)');
+                        line = line.replace(/M0*6(?!\d)/i, '(M6)');
                     }
                     //line = line.replace(`${tool?.[0]}`, `(${tool?.[0]})`);
                 }
@@ -695,6 +719,11 @@ class GrblHalController {
         });
 
         this.runner.on('status', (res) => {
+            // Allow status polling to start as soon as any status arrives (e.g. from 0x87 in Hold state)
+            if (!this.ready) {
+                this.ready = true;
+            }
+
             // Make sure we also have axs parsed - at most two times or we get endless loop
             if (!this.runner.hasAXS() && res.activeState === GRBL_HAL_ACTIVE_STATE_IDLE && this.actionMask.axsReportCount < 2) {
                 this.writeln('$I');
@@ -1194,7 +1223,7 @@ class GrblHalController {
                 // Unpause sending when hold state exited using macro buttons - We check if software sender paused + state changed from hold to idle/run
                 const currentActiveState = _.get(this.state, 'status.activeState', '');
                 const runnerActiveState = _.get(this.runner.state, 'status.activeState', '');
-                if (this.workflow.isPaused &&
+                if (this.workflow.isPaused() &&
                     currentActiveState === GRBL_HAL_ACTIVE_STATE_HOLD &&
                     (runnerActiveState === GRBL_HAL_ACTIVE_STATE_IDLE || runnerActiveState === GRBL_HAL_ACTIVE_STATE_RUN)
                 ) {
@@ -1320,9 +1349,10 @@ class GrblHalController {
 
     async initController(semver) {
         // Send \x87 as a raw realtime byte
-        if (this.connection) {
+        // Moved this into connect again - don't need to send twice
+        /*if (this.connection) {
             this.connection.write(Buffer.from([0x87]));
-        }
+        }*/
 
         await delay(500);
         const hasSD = _.get(this.state, 'status.sdCard', null);
@@ -1404,6 +1434,7 @@ class GrblHalController {
 
         // Program feedrate
         const programFeedrate = this.runner.getCurrentFeedrate();
+        const spindleRate = this.runner.getCurrentSpindleRate();
 
         return Object.assign(context || {}, {
             // User-defined global variables
@@ -1455,6 +1486,9 @@ class GrblHalController {
 
             // Program Feedrate
             programFeedrate: programFeedrate,
+
+            // Current Spindle RPM
+            spindleRate: spindleRate,
 
             // Global objects
             ...globalObjects,
@@ -1562,15 +1596,18 @@ class GrblHalController {
         // Clear action values
         this.clearActionValues();
 
-        // Send $I to query firmware version; the startup event handler will take it from here
+        // Send $I to query firmware version; the startup event handler will take it from here.
+        // Also send 0x87 before $I as a raw realtime byte — this bypasses Hold state restrictions
+        // and triggers a status response that sets this.ready and populates activeState in the UI.
         setTimeout(() => {
             if (this.connection) {
+                this.connection.write(Buffer.from([0x87]));
                 this.write('$I\n');
             }
         }, 500);
     }
 
-    close(callback, received) {
+    close(callback, currentLineRunning) {
         const { port } = this.options;
 
         // Assertion check
@@ -1595,7 +1632,7 @@ class GrblHalController {
         this.emit('serialport:closeController', {
             port: port,
             inuse: false,
-        }, received);
+        }, currentLineRunning);
 
         if (this.isClose()) {
             callback(null);
@@ -1716,14 +1753,15 @@ class GrblHalController {
                 // This is the fastest way to do it without having to check the status reports.
                 //const dwell = '%wait ; Wait for the planner to empty';
 
-                // add delay to spindle startup if enabled
-                //const preferences = store.get('preferences', {});
-                /*const delay = _.get(preferences, 'spindleDelay', 0);
-
-                if (Number(delay)) {
-                    gcode = gcode.replace(/\b(?:S\d* ?M[34]|M[34] ?S\d*)\b(?! ?G4 ?P?\b)/g, `$& G4 P${delay}`);
-                }*/
-
+                // Insert dwell for firmware < ATCI_SUPPORTED_VERSION where $392 is not acted on by firmware
+                const semver = this.runner.settings?.version?.semver ?? 0;
+                const preferences = store.get('preferences', {});
+                const spindleOnDelay = Number(_.get(preferences, 'spindleDelay', 0));
+                console.log('Spindle delay: ', spindleOnDelay);
+                if (semver < ATCI_SUPPORTED_VERSION && spindleOnDelay > 0) {
+                    gcode = gcode.replace(/\b(?:S\d* ?M[34]|M[34] ?S\d*)\b(?! ?G4 ?P?\b)/g, `$& G4 P${spindleOnDelay}`);
+                }
+                this.toolChangeContext.mappings = {};
                 const ok = this.sender.load(name, gcode + '\n', context);
                 if (!ok) {
                     callback(new Error(`Invalid G-code: name=${name}`));
@@ -1752,6 +1790,8 @@ class GrblHalController {
                 this.command('gcode:start');
             },
             'gcode:start': () => {
+                const preferences = store.get('preferences', {});
+                const defaultSpindleDelay = Number(_.get(preferences, 'spindleDelay', 0));
                 const [lineToStartFrom, zMax, safeHeight = 10] = args;
                 const totalLines = this.sender.state.total;
                 const startEventEnabled = this.event.hasEnabledEvent(PROGRAM_START);
@@ -1846,7 +1886,7 @@ class GrblHalController {
                     modalGCode.push(`G0 G90 G21 Z${zMax + safeHeight}`);
                     // ATCI - add M6 before spindles turned on to get correct tool to spin up
                     if (atci && modal.tool !== 0) {
-                        if (this.toolChangeContext.modal) {
+                        if (this.toolChangeContext.mappings) {
                             const remap = _.get(this.toolChangeContext.mappings, modal.tool, null);
                             if (remap) {
                                 modalGCode.push(`M6 T${remap}`);
@@ -1860,6 +1900,8 @@ class GrblHalController {
 
                     if (hasSpindle) {
                         modalGCode.push(`${modal.spindle} S${spindleRate}`);
+                    } else {
+                        modalGCode.push(`${modal.units} F${feedRate}`);
                     }
                     modalGCode.push(`G0 G90 G21 X${xVal.toFixed(3)} Y${yVal.toFixed(3)}`);
                     if (aVal) {
@@ -1870,7 +1912,9 @@ class GrblHalController {
                     modalGCode.push(`${modal.units} ${modal.distance} ${modal.arc} ${modalWcs} ${modal.plane} ${coolant.flood} ${coolant.mist}`);
                     modalGCode.push(`F${feedRate}`);
                     modalGCode.push(setModalGcode);
-                    modalGCode.push('G4 P1');
+                    if (defaultSpindleDelay > 0) {
+                        modalGCode.push(`G4 P${defaultSpindleDelay}`);
+                    }
                     modalGCode.push('%_GCODE_START');
                     // console.log(modalGCode);
 
@@ -2127,11 +2171,14 @@ class GrblHalController {
                 }
             },
             'lasertest:on': () => {
-                const [power = 0, duration = 0, maxS = 1000] = args;
+                const [power = 0, duration = 0] = args;
+
+                const maxS = ensurePositiveNumber(this.runner.getSetting('$730', 255));
+                const laserPower = ensurePositiveNumber(maxS * (power / 100)).toFixed(2);
                 const commands = [
                     // https://github.com/gnea/grbl/wiki/Grbl-v1.1-Laser-Mode
                     // The laser will only turn on when Grbl is in a G1, G2, or G3 motion mode.
-                    'G1F1 M3 S' + ensurePositiveNumber(maxS * (power / 100))
+                    'G1F1 M3 S' + laserPower
                 ];
                 if (duration > 0) {
                     commands.push('G4P' + ensurePositiveNumber(duration));
@@ -2382,8 +2429,8 @@ class GrblHalController {
             },
             'toolchange:context': () => {
                 const [context] = args;
+
                 this.toolChangeContext = { ...this.toolChangeContext, ...context };
-                console.log(this.toolChangeContext);
             },
             'toolchange:pre': () => {
                 log.debug('Starting pre hook');
@@ -2458,6 +2505,12 @@ class GrblHalController {
             'sdcard:read': () => {
                 const [fileName] = args;
 
+                // Always request $F<= if ATCI.macro
+                if (fileName === 'ATCI.macro') {
+                    this.command('gcode', `$F<=${fileName}`);
+                    return;
+                }
+
                 const availableFiles = _.get(this.state, 'sdcard.files', []);
                 const hasFile = _.find(availableFiles, (file) => file.name === fileName);
 
@@ -2477,14 +2530,23 @@ class GrblHalController {
             },
             'ymodem:upload': async () => {
                 const [fileData] = args;
-                if (this.connection.isNetwork()) {
-                    const [address] = this.connection.getFTPInfo();
-                    const FTPPort = Number(this.runner.getSetting('$308', 21));
-                    await this.ftpClient.openConnection(address, FTPPort, 'grblHAL', 'grblHAL');
-                    await this.ftpClient.sendFile(fileData);
-                    return;
-                }
-                this.ymodem.sendFile(fileData, this.connection.getConnectionObject());
+
+                this.command('sdcard:mount');
+
+                setTimeout(async () => {
+                    if (this.runner.isSDMounted()) {
+                        if (this.connection.isNetwork()) {
+                            const [address] = this.connection.getFTPInfo();
+                            const FTPPort = Number(this.runner.getSetting('$308', 21));
+                            await this.ftpClient.openConnection(address, FTPPort, 'grblHAL', 'grblHAL');
+                            await this.ftpClient.sendFile(fileData);
+                            return;
+                        }
+                        this.ymodem.sendFile(fileData, this.connection.getConnectionObject());
+                    } else {
+                        this.emit('ymodem:error', 'SD Card not detected, please insert an SD Card in FAT32 format, 32 GB or under, and try again');
+                    }
+                }, 1250);
             },
             'ymodem:uploadFiles': () => {
                 const [files] = args;
@@ -2501,7 +2563,7 @@ class GrblHalController {
                         }
                         this.ymodem.sendFiles(files, this.connection.getConnectionObject());
                     } else {
-                        this.emit('ymodem:error', 'SD Card failed to mount, unable to upload files.');
+                        this.emit('ymodem:error', 'SD Card not detected, please insert an SD Card in FAT32 format, 32 GB or under, and try again');
                     }
                 }, 1500);
             },

@@ -12,6 +12,7 @@ import pubsub from 'pubsub-js';
 import { ToolStatusBadges } from 'app/features/ATC/components/ui/ToolStatusBadges.tsx';
 import { Badge } from 'app/features/ATC/components/ui/Badge.tsx';
 import cn from 'classnames';
+import store from 'app/store';
 
 export function CurrentToolInfo({ disabled }: { disabled?: boolean }) {
     const { rackSize, connected, atcAvailable } = useToolChange();
@@ -100,11 +101,25 @@ export function CurrentToolInfo({ disabled }: { disabled?: boolean }) {
         ? '-'
         : selectedTool.toolOffsets.z.toFixed(3);
     const allowManualBadge = connected && atcAvailable;
+    const configuredRackSize = Number(
+        store.get('widgets.atc.templates.variables._tc_slots.value', rackSize),
+    );
+    const configuredRackEnable = Number(
+        store.get(
+            'widgets.atc.templates.variables._tc_rack_enable.value',
+            configuredRackSize > 0 ? 1 : 0,
+        ),
+    );
+    const isRackDisabledNoSlots =
+        configuredRackSize === 0 && configuredRackEnable === 0;
+    const effectiveRackSize = isRackDisabledNoSlots ? 0 : rackSize;
     const isManualTool =
         !isEmptyTool &&
-        (selectedTool.isManual ?? selectedTool.id > rackSize);
+        (isRackDisabledNoSlots ||
+            (selectedTool.isManual ?? selectedTool.id > effectiveRackSize));
     const EmptyIcon = state.icon;
-    const isRackTool = !isEmptyTool && selectedTool.id <= rackSize;
+    const isRackTool =
+        !isEmptyTool && !isRackDisabledNoSlots && selectedTool.id <= effectiveRackSize;
     const wrapperClassName = cn(
         state.backgroundColor,
         state.borderColor,

@@ -114,6 +114,7 @@ export interface Probe {
     zProbeDistance: number;
     touchPlateHeight: number;
     probeType: string;
+    touchplateTypeSwitcher: boolean;
     probeAxis: string;
     direction: number;
     tipDiameter3D: number;
@@ -125,6 +126,7 @@ export interface Actions {
     setProbeConnectivity: (connectionMade: boolean) => void;
     onOpenChange: (isOpen: boolean) => void;
     changeProbeCommand: (value: string) => void;
+    changeTouchPlateType: (value: TOUCHPLATE_TYPES_T) => void;
     toggleUseTLO: () => void;
     handleProbeDepthChange: (event: Event) => void;
     handleProbeFeedrateChange: (event: Event) => void;
@@ -157,6 +159,7 @@ export interface State {
     availableProbeCommands: ProbeCommand[];
     selectedProbeCommand: number;
     touchplate: ProbeProfile;
+    touchplateTypeSwitcher: boolean;
     toolDiameter: number;
     availableTools: AvailableTool[];
     units: UNITS_EN;

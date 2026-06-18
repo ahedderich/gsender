@@ -40,6 +40,7 @@ import log from 'electron-log';
 import path from 'path';
 import fs from 'fs';
 import * as Sentry from '@sentry/electron/main';
+import WinReg from 'winreg';
 import WindowManager from './electron-app/WindowManager';
 import launchServer from './server-cli';
 import pkg from './package.json';
@@ -68,6 +69,7 @@ let windowManager = null;
 let hostInformation = {};
 let grblLog = log.create('grbl');
 let logPath;
+let powerBlockerNum = 0;
 const externalRendererUrl = process.env.NODE_ENV === 'development'
     ? process.env.ELECTRON_RENDERER_URL
     : '';
@@ -275,6 +277,12 @@ const main = () => {
             };
             const window = await windowManager.openWindow(url, options, splashScreen);
 
+            window.on("ready-to-show", () => {
+                const savedScaleFactor = Number(store.get("displayScaleFactor", 1.0));
+
+                window.webContents.setZoomFactor(savedScaleFactor);
+            });
+
             // Check argv for file path on Windows/Linux cold start
             if (process.platform !== 'darwin') {
                 const filePath = process.argv.find(arg =>
@@ -293,14 +301,23 @@ const main = () => {
                 }
             });
 
-            // Power saver - display sleep higher precedence over app suspension
-            powerSaveBlocker.start('prevent-display-sleep');
-            powerMonitor.on('lock-screen', () => {
-                powerSaveBlocker.start('prevent-display-sleep');
-            });
-            powerMonitor.on('suspend', () => {
-                powerSaveBlocker.start('prevent-app-suspension');
-                log.info('Prevented suspension');
+            ipcMain.on('change-power-saving', (_msg, enabled) => {
+                if (!enabled) {
+                    // Power saver - display sleep higher precedence over app suspension
+                    powerBlockerNum = powerSaveBlocker.start('prevent-display-sleep');
+                    powerMonitor.on('lock-screen', () => {
+                        powerSaveBlocker.start('prevent-display-sleep');
+                    }),
+                    powerMonitor.on('suspend', () => {
+                        powerSaveBlocker.start('prevent-app-suspension');
+                        log.info('Prevented suspension');
+                    })
+                } else {
+                    if (powerSaveBlocker.isStarted(powerBlockerNum)) {
+                        powerSaveBlocker.stop(powerBlockerNum);
+                        powerMonitor.removeAllListeners();
+                    }
+                }
             });
 
             // Save window size and position
@@ -390,9 +407,39 @@ const main = () => {
                 return hostInformation;
             });
 
+            ipcMain.handle('get-windows-registry', async (channel) => {
+                if (process.platform !== 'win32') {
+                    return false;
+                }
+
+                try {
+                    const registry = new WinReg({
+                        hive: WinReg.HKLM,
+                        key: '\\Software\\SienciLabs\\gSender',
+                    });
+
+                    const isBundledValue = await new Promise((resolve, reject) => {
+                        registry.get('IsBundled', (err, item) => {
+                            if (err) {
+                                reject(err);
+                                return;
+                            }
+                            resolve(item.value);
+                        });
+                    });
+
+                    const isBundled = isBundledValue === '0x1';
+
+                    return isBundled;
+                } catch (error) {
+                    console.error(error);
+                    return false;
+                }
+            });
+
             /**
-       * gSender config events - move electron store changes out of renderer process
-       */
+            * gSender config events - move electron store changes out of renderer process
+            */
             ipcMain.on('open-upload-dialog', async () => {
                 try {
                     let additionalOptions = {};
@@ -429,7 +476,7 @@ const main = () => {
 
                     prevDirectory = filePath; // set previous directory
 
-                    fs.readFile(FULL_FILE_PATH, 'utf8', (err, data) => {
+                    fs.readFile(FULL_FILE_PATH, 'latin1', (err, data) => {
                         if (err) {
                             log.error(`Error in readFile: ${err}`);
                             return;
@@ -500,6 +547,13 @@ const main = () => {
                 windowManager.childWindows.forEach((window) => {
                     window.webContents.send('recieve-data-' + widget, data);
                 });
+            });
+
+            ipcMain.on("save-display-scale", (_event, scaleFactor) => {
+                const value = Number(scaleFactor) || 1.0;
+
+                store.set("displayScaleFactor", value);
+                window.webContents.setZoomFactor(value);
             });
 
             //Handle app restart with remote settings

@@ -586,6 +586,30 @@ function generateSupportFile() {
     const isRotaryMode = getRotaryMode();
     const safeHeight = getSafeHeight();
     const isConnected = connection.isConnected;
+    const firmwareVersion = (() => {
+        const disconnectedValue = 'disconnected';
+        const reportedFirmwareVersion = get(grblInfo, 'settings.version');
+
+        if (!isConnected) {
+            return disconnectedValue;
+        }
+
+        if (typeof reportedFirmwareVersion === 'string') {
+            const sanitizedVersion = reportedFirmwareVersion.trim();
+            return sanitizedVersion || disconnectedValue;
+        }
+
+        if (reportedFirmwareVersion && typeof reportedFirmwareVersion === 'object') {
+            const semver = get(reportedFirmwareVersion, 'semver');
+
+            if (typeof semver === 'string' || typeof semver === 'number') {
+                const sanitizedSemver = String(semver).trim();
+                return sanitizedSemver || disconnectedValue;
+            }
+        }
+
+        return disconnectedValue;
+    })();
     let fileStart = {};
     let filePause = {};
     let fileResume = {};
@@ -919,9 +943,14 @@ function generateSupportFile() {
                                     {grblInfo.type || 'Unknown'}
                                 </Text>
 
+                                <Text style={styles.textBold}>Board:</Text>
+                                <Text style={styles.text}>
+                                    {grblInfo.board || 'Unknown'}
+                                </Text>
+
                                 <Text style={styles.textBold}>Firmware:</Text>
                                 <Text style={styles.text}>
-                                    {grblInfo.settings.info?.BOARD || 'N/A'}
+                                    {firmwareVersion}
                                 </Text>
 
                                 <Text style={styles.textBold}>

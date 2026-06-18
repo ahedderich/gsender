@@ -7,6 +7,7 @@ interface PositionSetterProps {
     onPositionChange: (positions: { x: string; y: string; z?: string }) => void;
     showZ?: boolean;
     label?: string;
+    units?: string;
     actionButton?: ReactNode;
 }
 
@@ -17,6 +18,7 @@ export function PositionSetter({
     onPositionChange,
     showZ = false,
     label = 'Position',
+    units = 'mm',
     actionButton,
 }: PositionSetterProps) {
     const [x, setX] = useState(initialX);
@@ -56,7 +58,7 @@ export function PositionSetter({
         <div className="space-y-4">
             <div>
                 <label className="block text-sm font-semibold text-gray-900 dark:text-white mb-3">
-                    {label}
+                    {label} ({units})
                 </label>
                 <div
                     className={`grid gap-4 ${showZ ? 'grid-cols-3' : 'grid-cols-2'}`}

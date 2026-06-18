@@ -55,6 +55,7 @@ export function ToolTimeline({
         reportedRackSize > 0
             ? reportedRackSize
             : Object.values(toolTableData || {}).length;
+    const hasToolTable = Object.values(toolTableData || {}).length > 0;
     useEffect(() => {
         setToolTable(mapToolNicknamesAndStatus(toolTableData, rackSize));
     }, [toolTableData, rackSize]);
@@ -126,7 +127,7 @@ export function ToolTimeline({
                                     style={{ backgroundColor: activeTool.color }}
                                 />
                                 <span className="text-sm font-semibold text-gray-900 dark:text-white">
-                                    T{activeTool.toolNumber}
+                                    T{mappings.get(activeTool.toolNumber) ?? activeTool.toolNumber}
                                 </span>
                             </>
                         )}
@@ -204,6 +205,7 @@ export function ToolTimeline({
                                             remapValue={remapValue}
                                             isManual={isManual}
                                             probeState={probeState}
+                                            showProbeStatus={hasToolTable}
                                             canRemap={allowManualBadge}
                                             remapDisabled={remapDisabled}
                                         />

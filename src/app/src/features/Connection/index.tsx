@@ -2,6 +2,7 @@ import { useEffect, useState, useRef } from 'react';
 import cn from 'classnames';
 import { connect } from 'react-redux';
 import get from 'lodash/get';
+import { usePostHog } from '@posthog/react';
 
 import controller from 'app/lib/controller';
 import store from 'app/store';
@@ -46,6 +47,7 @@ export type FirmwareFlavour = 'Grbl' | 'grblHAL' | '';
 
 function Connection(props: ConnectionProps) {
     const connectionConfig = new WidgetConfig('connection');
+    const posthog = usePostHog();
 
     // Add listener for reconnect request
     useEffect(() => {
@@ -151,11 +153,22 @@ function Connection(props: ConnectionProps) {
                 }
                 if (err) {
                     setConnectionState(ConnectionState.ERROR);
+                    posthog?.capture('connection_failed', {
+                        port,
+                        connection_type: type,
+                        error: err,
+                    });
                     return;
                 }
 
                 setConnectionState(ConnectionState.CONNECTED);
                 setActivePort(port);
+                posthog?.capture('machine_connected', {
+                    port,
+                    connection_type: type,
+                    baudrate: baud,
+                    firmware: defaultFirmware,
+                });
             },
         );
 
@@ -170,6 +183,10 @@ function Connection(props: ConnectionProps) {
     }
 
     function onDisconnectClick() {
+        posthog?.capture('machine_disconnected', {
+            port: activePort,
+            connection_type: connectionType,
+        });
         setConnectionState(ConnectionState.DISCONNECTED);
         setConnectionType(ConnectionType.DISCONNECTED);
 

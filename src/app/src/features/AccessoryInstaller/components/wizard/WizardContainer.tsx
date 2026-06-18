@@ -32,6 +32,15 @@ export function WizardContainer({ subWizard, onExit }: WizardContainerProps) {
         setShowCompletion(false);
     }, [subWizard.id]);
 
+    useEffect(() => {
+        if (!currentStep.autoComplete?.()) return;
+
+        setCompletedSteps(prev => new Set(prev).add(currentStepIndex));
+        if (currentStepIndex < subWizard.steps.length - 1) {
+            setCurrentStepIndex(prev => prev + 1);
+        }
+    }, [currentStepIndex, subWizard.id]);
+
     const handleNext = () => {
         if (!isLastStep && isCurrentStepComplete) {
             setCurrentStepIndex(currentStepIndex + 1);
@@ -40,7 +49,11 @@ export function WizardContainer({ subWizard, onExit }: WizardContainerProps) {
 
     const handlePrevious = () => {
         if (!isFirstStep) {
-            setCurrentStepIndex(currentStepIndex - 1);
+            let prevIndex = currentStepIndex - 1;
+            while (prevIndex > 0 && subWizard.steps[prevIndex].autoComplete?.()) {
+                prevIndex--;
+            }
+            setCurrentStepIndex(prevIndex);
         }
     };
 
@@ -163,7 +176,7 @@ export function WizardContainer({ subWizard, onExit }: WizardContainerProps) {
                         )}
                     </div>
 
-                    <div className="w-2/5 portrait:h-2/5 portrait:w-full bg-gray-200 dark:bg-dark p-12 portrait:p-4 flex flex-col overflow-hidden">
+                    <div className="w-2/5 portrait:h-2/5 portrait:w-full bg-gray-200 dark:bg-dark px-12 py-4 portrait:p-4 flex flex-col overflow-hidden">
                         {showCompletion && CompletionComponent ? (
                             <SecondaryContentPanel
                                 content={[

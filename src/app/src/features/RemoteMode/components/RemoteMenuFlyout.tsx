@@ -69,7 +69,7 @@ export function RemoteMenuFlyout() {
                 >
                     <p className="text-gray-800 text-md font-medium">Menu</p>
                     <NavFlyoutLink href="/remote" label="Home" />
-                    <NavFlyoutLink href="/configuration" label="Config" />
+                    <NavFlyoutLink href="/remote/config" label="Config" />
                 </PopoverContent>
             </Popover>
         </div>

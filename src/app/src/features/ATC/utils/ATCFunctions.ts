@@ -130,7 +130,8 @@ export function isKeepoutEnabled() {
 }
 
 export function sendATCHomingDialog() {
-    const hasATC = isATCAvailable();
+    controller.command('homing');
+    /*const hasATC = isATCAvailable();
     const keepoutEnabled = isKeepoutEnabled();
     const warningEnabled = store.get('widgets.atc.warnOnHome', false);
     if (hasATC && !keepoutEnabled && warningEnabled) {
@@ -145,7 +146,7 @@ export function sendATCHomingDialog() {
         });
     } else {
         controller.command('homing');
-    }
+    }*/
 }
 
 const toolpathColors = TOOLPATH_COLOR_HEXES.map((hex) => new THREE.Color(hex));
