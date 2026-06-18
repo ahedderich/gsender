@@ -60,11 +60,17 @@ const StockEditModal: React.FC<Props> = ({ isOpen, onClose, settings, onUpdate }
                                 </label>
                                 <input
                                     type="number"
-                                    value={settings.stockWidth}
+                                    value={settings.stockWidth || ''}
+                                    placeholder="Required"
                                     min={1}
                                     step={1}
                                     onChange={(e) => onUpdate('stockWidth', parseFloat(e.target.value) || 0)}
-                                    className="w-full text-sm border border-gray-300 dark:border-gray-600 rounded px-2 py-1.5 bg-white dark:bg-dark text-gray-900 dark:text-white"
+                                    className={cx(
+                                        'w-full text-sm border rounded px-2 py-1.5 bg-white dark:bg-dark text-gray-900 dark:text-white',
+                                        settings.stockWidth > 0
+                                            ? 'border-gray-300 dark:border-gray-600'
+                                            : 'border-amber-400 dark:border-amber-500',
+                                    )}
                                 />
                             </div>
                             <div>
@@ -73,11 +79,17 @@ const StockEditModal: React.FC<Props> = ({ isOpen, onClose, settings, onUpdate }
                                 </label>
                                 <input
                                     type="number"
-                                    value={settings.stockLength}
+                                    value={settings.stockLength || ''}
+                                    placeholder="Required"
                                     min={1}
                                     step={1}
                                     onChange={(e) => onUpdate('stockLength', parseFloat(e.target.value) || 0)}
-                                    className="w-full text-sm border border-gray-300 dark:border-gray-600 rounded px-2 py-1.5 bg-white dark:bg-dark text-gray-900 dark:text-white"
+                                    className={cx(
+                                        'w-full text-sm border rounded px-2 py-1.5 bg-white dark:bg-dark text-gray-900 dark:text-white',
+                                        settings.stockLength > 0
+                                            ? 'border-gray-300 dark:border-gray-600'
+                                            : 'border-amber-400 dark:border-amber-500',
+                                    )}
                                 />
                             </div>
                         </div>
@@ -88,11 +100,17 @@ const StockEditModal: React.FC<Props> = ({ isOpen, onClose, settings, onUpdate }
                             </label>
                             <input
                                 type="number"
-                                value={settings.stockDiameter}
+                                value={settings.stockDiameter || ''}
+                                placeholder="Required"
                                 min={1}
                                 step={1}
                                 onChange={(e) => onUpdate('stockDiameter', parseFloat(e.target.value) || 0)}
-                                className="w-full text-sm border border-gray-300 dark:border-gray-600 rounded px-2 py-1.5 bg-white dark:bg-dark text-gray-900 dark:text-white"
+                                className={cx(
+                                    'w-full text-sm border rounded px-2 py-1.5 bg-white dark:bg-dark text-gray-900 dark:text-white',
+                                    settings.stockDiameter > 0
+                                        ? 'border-gray-300 dark:border-gray-600'
+                                        : 'border-amber-400 dark:border-amber-500',
+                                )}
                             />
                         </div>
                     )}

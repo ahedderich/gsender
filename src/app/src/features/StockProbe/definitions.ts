@@ -97,9 +97,9 @@ export interface RotationProbeParams extends StockProbeGCodeParams {
 
 export const DEFAULT_SETTINGS: StockProbeSettings = {
     stockType: 'rectangle',
-    stockWidth: 100,
-    stockLength: 100,
-    stockDiameter: 100,
+    stockWidth: 0,
+    stockLength: 0,
+    stockDiameter: 0,
     xyProbingHeight: -2,
     bufferDistance: 20,
     safeHeight: 10,

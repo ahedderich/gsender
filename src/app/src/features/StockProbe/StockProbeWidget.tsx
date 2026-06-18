@@ -9,6 +9,7 @@
  */
 
 import React, { useMemo, useState } from 'react';
+import cx from 'classnames';
 import includes from 'lodash/includes';
 import { Button } from 'app/components/Button';
 import { useTypedSelector } from 'app/hooks/useTypedSelector';
@@ -105,10 +106,27 @@ const StockProbeWidget: React.FC = () => {
 
     const isRect = settings.stockType === 'rectangle';
 
+    const hasStockDimensions = isRect
+        ? settings.stockWidth > 0 && settings.stockLength > 0
+        : settings.stockDiameter > 0;
+
+    const resetStockDimensions = () => {
+        updateSetting('stockWidth', 0);
+        updateSetting('stockLength', 0);
+        updateSetting('stockDiameter', 0);
+        updateSetting('lastProbedWidth', null);
+        updateSetting('lastProbedLength', null);
+        updateSetting('lastProbedDiameter', null);
+        updateSetting('lastProbedAngle', null);
+        updateSetting('lastProbedTimestamp', null);
+    };
+
     // Stock dimension labels
-    const roughDims = isRect
-        ? `${settings.stockWidth} × ${settings.stockLength} mm`
-        : `⌀ ${settings.stockDiameter} mm`;
+    const roughDims = !hasStockDimensions
+        ? 'Not set'
+        : isRect
+            ? `${settings.stockWidth} × ${settings.stockLength} mm`
+            : `⌀ ${settings.stockDiameter} mm`;
 
     const hasProbedData = probedDimensions.timestamp != null;
     const probedDimsLabel = hasProbedData
@@ -126,8 +144,8 @@ const StockProbeWidget: React.FC = () => {
                     <p className="text-base font-semibold text-gray-700 dark:text-gray-200 truncate capitalize">
                         {settings.stockType}
                     </p>
-                    <p className="text-base text-gray-600 dark:text-gray-300 truncate" title={`Rough: ${roughDims}`}>
-                        <span className="text-gray-400 dark:text-gray-500">R: </span>{roughDims}
+                    <p className={cx('text-base truncate', hasStockDimensions ? 'text-gray-600 dark:text-gray-300' : 'text-amber-500')} title={`Rough: ${roughDims}`}>
+                        <span className={hasStockDimensions ? 'text-gray-400 dark:text-gray-500' : 'text-amber-500'}>R: </span>{roughDims}
                     </p>
                     <p className="text-base text-gray-600 dark:text-gray-300 truncate" title={hasProbedData ? `Probed: ${probedDimsLabel}` : 'Not probed'}>
                         <span className={hasProbedData ? 'text-green-500' : 'text-gray-400 dark:text-gray-500'}>
@@ -135,14 +153,26 @@ const StockProbeWidget: React.FC = () => {
                         </span>
                         {probedDimsLabel}
                     </p>
-                    <Button
-                        variant="ghost"
-                        size="mini"
-                        className="text-sm px-0 h-auto underline text-blue-500 hover:text-blue-600"
-                        onClick={() => setActiveModal('stockEdit')}
-                    >
-                        Edit
-                    </Button>
+                    <div className="flex gap-2">
+                        <Button
+                            variant="ghost"
+                            size="mini"
+                            className="text-sm px-0 h-auto underline text-blue-500 hover:text-blue-600"
+                            onClick={() => setActiveModal('stockEdit')}
+                        >
+                            Edit
+                        </Button>
+                        {hasStockDimensions && (
+                            <Button
+                                variant="ghost"
+                                size="mini"
+                                className="text-sm px-0 h-auto underline text-red-500 hover:text-red-600"
+                                onClick={resetStockDimensions}
+                            >
+                                Reset
+                            </Button>
+                        )}
+                    </div>
                 </div>
             </div>
 
@@ -150,26 +180,29 @@ const StockProbeWidget: React.FC = () => {
             <div className="flex flex-col gap-1.5 h-full">
                 <Button
                     variant="primary"
-                    disabled={!canClick}
+                    disabled={!canClick || !hasStockDimensions}
                     onClick={() => setActiveModal('probeRoutines')}
                     className="flex-1 text-sm whitespace-nowrap px-3"
+                    title={!hasStockDimensions ? 'Set stock dimensions first' : undefined}
                 >
                     Probe Routines
                 </Button>
                 <Button
                     variant="secondary"
-                    disabled={!canClick}
+                    disabled={!canClick || !hasStockDimensions}
                     onClick={() => setActiveModal('individual')}
                     className="flex-1 text-sm whitespace-nowrap px-3"
+                    title={!hasStockDimensions ? 'Set stock dimensions first' : undefined}
                 >
                     Individual
                 </Button>
                 {isRect && (
                     <Button
                         variant="secondary"
-                        disabled={!canClick}
+                        disabled={!canClick || !hasStockDimensions}
                         onClick={() => setActiveModal('rotation')}
                         className="flex-1 text-sm whitespace-nowrap px-3"
+                        title={!hasStockDimensions ? 'Set stock dimensions first' : undefined}
                     >
                         Rotation
                     </Button>
