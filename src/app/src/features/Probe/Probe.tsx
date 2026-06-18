@@ -42,8 +42,8 @@ import { Actions, State } from './definitions';
 import useKeybinding from 'app/lib/useKeybinding';
 import useShuttleEvents from 'app/hooks/useShuttleEvents';
 import Tooltip from 'app/components/Tooltip';
-import StockProbeWrapper from '../StockProbe';
 import { TOUCHPLATE_TYPES } from 'app/lib/constants';
+import StockProbeWrapper from '../StockProbe';
 
 type ProbeProps = {
     state: State;
