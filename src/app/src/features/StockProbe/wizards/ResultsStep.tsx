@@ -33,6 +33,9 @@ interface Props {
     onRetry: () => void;
     onClose: () => void;
     isRotation?: boolean;
+    onApplyRotation?: () => void;
+    canApplyRotation?: boolean;
+    rotationApplied?: boolean;
 }
 
 const CoordGrid: React.FC<{ label: string; pos: CoordPosition }> = ({ label, pos }) => (
@@ -56,6 +59,9 @@ const ResultsStep: React.FC<Props> = ({
     onRetry,
     onClose,
     isRotation = false,
+    onApplyRotation,
+    canApplyRotation = false,
+    rotationApplied = false,
 }) => {
     return (
         <div className="flex flex-col items-center gap-4 py-2">
@@ -107,6 +113,27 @@ const ResultsStep: React.FC<Props> = ({
                     <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
                         Adjust workholding based on the measured angle, then re-probe as needed.
                     </p>
+                    {probedDimensions?.rotationAngle !== undefined && onApplyRotation && (
+                        <div className="mt-3 flex flex-col items-center gap-1">
+                            <Button
+                                variant="primary"
+                                size="sm"
+                                onClick={onApplyRotation}
+                                disabled={!canApplyRotation}
+                            >
+                                Apply rotation to loaded gcode
+                            </Button>
+                            {rotationApplied ? (
+                                <span className="text-xs text-gray-500 dark:text-gray-400">
+                                    Rotation applied — revert from the Stock Probe widget.
+                                </span>
+                            ) : !canApplyRotation ? (
+                                <span className="text-xs text-gray-400 italic">
+                                    Load a g-code file to enable.
+                                </span>
+                            ) : null}
+                        </div>
+                    )}
                 </div>
             )}
 

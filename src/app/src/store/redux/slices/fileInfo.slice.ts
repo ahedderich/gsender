@@ -26,6 +26,9 @@ const initialState: FileInfoState = {
     content: '',
     fileType: null,
     usedAxes: [],
+    rawContent: '',
+    rotationApplied: false,
+    appliedRotationAngle: 0,
 };
 
 const normalizeBBox = (bbox: Partial<BBox>): BBox => {
@@ -71,10 +74,57 @@ const fileInfoSlice = createSlice({
             }>,
         ) => {
             const { content, name, size } = action.payload;
+            // Re-uploading a rotated program echoes back through file:load →
+            // updateFileContent. Detect that echo (same content we just applied) so
+            // it does not wipe the rotation bookkeeping; any other (new) program clears it.
+            const isRotationEcho = state.rotationApplied && content === state.content;
             state.fileLoaded = true;
             state.content = content;
             state.name = name;
             state.size = size;
+            if (!isRotationEcho) {
+                state.rawContent = '';
+                state.rotationApplied = false;
+                state.appliedRotationAngle = 0;
+            }
+        },
+        applyGcodeRotation: (
+            state,
+            action: PayloadAction<{
+                content: string;
+                rawContent: string;
+                name: string;
+                size: number;
+                angle: number;
+            }>,
+        ) => {
+            const { content, rawContent, name, size, angle } = action.payload;
+            // Keep the very first backup so re-applying (with a corrected angle)
+            // never overwrites the true original.
+            if (!state.rotationApplied) {
+                state.rawContent = rawContent;
+            }
+            state.content = content;
+            state.name = name;
+            state.size = size;
+            state.fileLoaded = true;
+            state.rotationApplied = true;
+            state.appliedRotationAngle = angle;
+        },
+        revertGcodeRotation: (
+            state,
+            action: PayloadAction<{ content: string; name: string; size: number }>,
+        ) => {
+            // `content` (the original) is passed in rather than read from
+            // state.rawContent: the revert re-upload echoes through updateFileContent,
+            // which may have already cleared rawContent by the time this runs.
+            const { content, name, size } = action.payload;
+            state.content = content;
+            state.name = name;
+            state.size = size;
+            state.rawContent = '';
+            state.rotationApplied = false;
+            state.appliedRotationAngle = 0;
         },
         updateFileProcessing: (
             state,
@@ -97,6 +147,8 @@ export const {
     updateFileContent,
     updateFileProcessing,
     updateFileRenderState,
+    applyGcodeRotation,
+    revertGcodeRotation,
 } = fileInfoSlice.actions;
 
 export default fileInfoSlice.reducer;

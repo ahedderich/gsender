@@ -49,6 +49,9 @@ interface Props {
     wcsIndex: number;
     probedDimensions?: ProbedDimensions;
     onProbeComplete?: (vars: Record<string, number>) => void;
+    onApplyRotation?: () => void;
+    canApplyRotation?: boolean;
+    rotationApplied?: boolean;
 }
 
 const STEP_LABELS: Record<WizardStep, string> = {
@@ -91,6 +94,9 @@ const WizardShell: React.FC<Props> = ({
     wcsIndex,
     probedDimensions,
     onProbeComplete,
+    onApplyRotation,
+    canApplyRotation,
+    rotationApplied,
 }) => {
     const [step, setStep] = useState<WizardStep>('intro');
     const [probeVerified, setProbeVerified] = useState(false);
@@ -275,7 +281,13 @@ const WizardShell: React.FC<Props> = ({
 
     return (
         <Dialog open={isOpen} onOpenChange={(open) => { if (!open) handleClose(); }}>
-            <DialogContent className="max-w-4xl">
+            <DialogContent
+                className="max-w-4xl"
+                // While probing is running, don't let an outside click or Escape dismiss
+                // the dialog — the only way out of an active probe is the Abort button.
+                onInteractOutside={(e) => { if (step === 'executing') e.preventDefault(); }}
+                onEscapeKeyDown={(e) => { if (step === 'executing') e.preventDefault(); }}
+            >
                 <DialogHeader>
                     <DialogTitle>{title}</DialogTitle>
                 </DialogHeader>
@@ -422,6 +434,9 @@ const WizardShell: React.FC<Props> = ({
                         onRetry={handleRetry}
                         onClose={handleClose}
                         isRotation={isRotation}
+                        onApplyRotation={onApplyRotation}
+                        canApplyRotation={canApplyRotation}
+                        rotationApplied={rotationApplied}
                     />
                 )}
 

@@ -4,6 +4,7 @@ import RotationSVG from '../illustrations/RotationSVG';
 import ProbeParamsInput from '../components/ProbeParamsInput';
 import { StockProbeSettings, SideSelection, ProbeDirection } from '../definitions';
 import { generateRotationGCode } from '../StockProbeGCode';
+import { useGcodeRotation } from '../hooks/useGcodeRotation';
 import cx from 'classnames';
 
 interface Props {
@@ -24,6 +25,7 @@ const RotationWizard: React.FC<Props> = ({ isOpen, onClose, settings, onSettings
     const [side, setSide] = useState<SideSelection>('top');
     const [direction, setDirection] = useState<ProbeDirection>('towards_center');
     const [rotationAngle, setRotationAngle] = useState<number | undefined>(undefined);
+    const { apply, canApply, rotationApplied } = useGcodeRotation();
     const [buffer, setBuffer] = useState(settings.bufferDistance);
     const [probingZHeight, setProbingZHeight] = useState(-3);
     const [edgeOffset, setEdgeOffset] = useState(settings.rotationEdgeOffset ?? 15);
@@ -151,7 +153,18 @@ const RotationWizard: React.FC<Props> = ({ isOpen, onClose, settings, onSettings
             isRotation={true}
             wcsIndex={settings.wcsIndex}
             probedDimensions={{ rotationAngle }}
-            onProbeComplete={(vars) => setRotationAngle(typeof vars.SP_ANGLE === 'number' ? vars.SP_ANGLE : undefined)}
+            onProbeComplete={(vars) => {
+                const angle = typeof vars.SP_ANGLE === 'number' ? vars.SP_ANGLE : undefined;
+                setRotationAngle(angle);
+                // Persist only the angle. Deliberately not touching lastProbedTimestamp,
+                // which gates the width×length "probed dimensions" row in the widget.
+                if (angle !== undefined) {
+                    onSettingsUpdate('lastProbedAngle', angle);
+                }
+            }}
+            onApplyRotation={rotationAngle !== undefined ? () => apply(rotationAngle) : undefined}
+            canApplyRotation={canApply}
+            rotationApplied={rotationApplied}
         />
     );
 };

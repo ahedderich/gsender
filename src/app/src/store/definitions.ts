@@ -156,6 +156,11 @@ export interface FileInfoState {
     content: string;
     fileType: FILE_TYPE_T;
     usedAxes: Array<string>;
+    // Stock-probe rotation: backup of the pre-rotation gcode plus whether a
+    // rotation is currently applied to `content` and by how many degrees (CCW).
+    rawContent: string;
+    rotationApplied: boolean;
+    appliedRotationAngle: number;
 }
 
 export interface PreferencesState {

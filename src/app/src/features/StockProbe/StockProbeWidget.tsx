@@ -26,6 +26,7 @@ import StockEditModal from './components/StockEditModal';
 import ProbeRoutinesModal from './components/ProbeRoutinesModal';
 import IndividualProbeModal from './components/IndividualProbeModal';
 import RotationWizard from './wizards/RotationWizard';
+import { useGcodeRotation } from './hooks/useGcodeRotation';
 
 type Modal = 'stockEdit' | 'probeRoutines' | 'individual' | 'rotation' | null;
 
@@ -82,6 +83,9 @@ const StockProbeWidget: React.FC = () => {
     };
 
     const [activeModal, setActiveModal] = useState<Modal>(null);
+
+    const { fileLoaded, rotationApplied, apply, revert } = useGcodeRotation();
+    const hasMeasuredAngle = settings.lastProbedAngle != null;
 
     const { activeState, controllerType, workflow, isConnected } = useTypedSelector((state) => ({
         activeState:    state.controller.state.status?.activeState ?? '',
@@ -164,6 +168,37 @@ const StockProbeWidget: React.FC = () => {
                         </span>
                         {probedDimsLabel}
                     </p>
+                    {hasMeasuredAngle && (
+                        <p className="text-base text-gray-600 dark:text-gray-300 truncate flex items-center gap-2" title="Measured stock rotation">
+                            <span>
+                                <span className="text-green-500">∠: </span>
+                                {(settings.lastProbedAngle as number).toFixed(3)}°
+                            </span>
+                            {!rotationApplied && (
+                                <Button
+                                    variant="ghost"
+                                    size="mini"
+                                    disabled={!fileLoaded}
+                                    className="text-sm px-0 h-auto underline text-blue-500 hover:text-blue-600 disabled:text-gray-400 disabled:no-underline"
+                                    title={fileLoaded ? 'Rotate the loaded g-code by the measured angle' : 'Load a g-code file first'}
+                                    onClick={() => apply(settings.lastProbedAngle as number)}
+                                >
+                                    Apply
+                                </Button>
+                            )}
+                            {rotationApplied && (
+                                <Button
+                                    variant="ghost"
+                                    size="mini"
+                                    className="text-sm px-0 h-auto underline text-red-500 hover:text-red-600"
+                                    title="Restore the original g-code"
+                                    onClick={() => revert()}
+                                >
+                                    Revert
+                                </Button>
+                            )}
+                        </p>
+                    )}
                     <div className="flex gap-2">
                         <Button
                             variant="ghost"
