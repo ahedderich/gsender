@@ -26,9 +26,10 @@ import StockEditModal from './components/StockEditModal';
 import ProbeRoutinesModal from './components/ProbeRoutinesModal';
 import IndividualProbeModal from './components/IndividualProbeModal';
 import RotationWizard from './wizards/RotationWizard';
-import { useGcodeRotation } from './hooks/useGcodeRotation';
+import HeightmapWizard from './wizards/HeightmapWizard';
+import { useGcodeTransforms } from './hooks/useGcodeTransforms';
 
-type Modal = 'stockEdit' | 'probeRoutines' | 'individual' | 'rotation' | null;
+type Modal = 'stockEdit' | 'probeRoutines' | 'individual' | 'rotation' | 'heightmap' | null;
 
 /** 3-D top-down 45° stock icon */
 const StockIcon: React.FC<{ stockType: 'rectangle' | 'round' }> = ({ stockType }) =>
@@ -84,8 +85,12 @@ const StockProbeWidget: React.FC = () => {
 
     const [activeModal, setActiveModal] = useState<Modal>(null);
 
-    const { fileLoaded, rotationApplied, apply, revert } = useGcodeRotation();
+    const {
+        fileLoaded, rotationApplied, heightmapApplied,
+        applyRotation, revertRotation, applyHeightmap, revertHeightmap,
+    } = useGcodeTransforms();
     const hasMeasuredAngle = settings.lastProbedAngle != null;
+    const hasMeasuredHeightmap = settings.lastHeightmap != null;
 
     const { activeState, controllerType, workflow, isConnected } = useTypedSelector((state) => ({
         activeState:    state.controller.state.status?.activeState ?? '',
@@ -134,6 +139,7 @@ const StockProbeWidget: React.FC = () => {
         updateSetting('lastProbedDiameter', null);
         updateSetting('lastProbedAngle', null);
         updateSetting('lastProbedTimestamp', null);
+        updateSetting('lastHeightmap', null);
     };
 
     // Stock dimension labels
@@ -181,7 +187,7 @@ const StockProbeWidget: React.FC = () => {
                                     disabled={!fileLoaded}
                                     className="text-sm px-0 h-auto underline text-blue-500 hover:text-blue-600 disabled:text-gray-400 disabled:no-underline"
                                     title={fileLoaded ? 'Rotate the loaded g-code by the measured angle' : 'Load a g-code file first'}
-                                    onClick={() => apply(settings.lastProbedAngle as number)}
+                                    onClick={() => applyRotation(settings.lastProbedAngle as number)}
                                 >
                                     Apply
                                 </Button>
@@ -192,7 +198,38 @@ const StockProbeWidget: React.FC = () => {
                                     size="mini"
                                     className="text-sm px-0 h-auto underline text-red-500 hover:text-red-600"
                                     title="Restore the original g-code"
-                                    onClick={() => revert()}
+                                    onClick={() => revertRotation()}
+                                >
+                                    Revert
+                                </Button>
+                            )}
+                        </p>
+                    )}
+                    {hasMeasuredHeightmap && (
+                        <p className="text-base text-gray-600 dark:text-gray-300 truncate flex items-center gap-2" title="Measured surface heightmap">
+                            <span>
+                                <span className="text-green-500">⛰: </span>
+                                {(settings.lastHeightmap!.cols)}×{(settings.lastHeightmap!.rows)} map
+                            </span>
+                            {!heightmapApplied && (
+                                <Button
+                                    variant="ghost"
+                                    size="mini"
+                                    disabled={!fileLoaded}
+                                    className="text-sm px-0 h-auto underline text-blue-500 hover:text-blue-600 disabled:text-gray-400 disabled:no-underline"
+                                    title={fileLoaded ? 'Recalculate the loaded g-code Z to follow the surface' : 'Load a g-code file first'}
+                                    onClick={() => applyHeightmap(settings.lastHeightmap!)}
+                                >
+                                    Apply
+                                </Button>
+                            )}
+                            {heightmapApplied && (
+                                <Button
+                                    variant="ghost"
+                                    size="mini"
+                                    className="text-sm px-0 h-auto underline text-red-500 hover:text-red-600"
+                                    title="Restore the original g-code Z"
+                                    onClick={() => revertHeightmap()}
                                 >
                                     Revert
                                 </Button>
@@ -253,6 +290,15 @@ const StockProbeWidget: React.FC = () => {
                         Rotation
                     </Button>
                 )}
+                <Button
+                    variant="secondary"
+                    disabled={!canClick || !hasStockDimensions}
+                    onClick={() => setActiveModal('heightmap')}
+                    className="flex-1 text-sm whitespace-nowrap px-3"
+                    title={!hasStockDimensions ? 'Set stock dimensions first' : undefined}
+                >
+                    Heightmap
+                </Button>
             </div>
 
             {/* ── Modals ── */}
@@ -276,6 +322,12 @@ const StockProbeWidget: React.FC = () => {
             />
             <RotationWizard
                 isOpen={activeModal === 'rotation'}
+                onClose={() => setActiveModal(null)}
+                settings={effectiveSettings}
+                onSettingsUpdate={updateSetting}
+            />
+            <HeightmapWizard
+                isOpen={activeModal === 'heightmap'}
                 onClose={() => setActiveModal(null)}
                 settings={effectiveSettings}
                 onSettingsUpdate={updateSetting}

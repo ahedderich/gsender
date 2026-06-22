@@ -85,6 +85,26 @@ export interface StockProbeSettings {
     lastProbedDiameter: number | null;
     lastProbedAngle: number | null;
     lastProbedTimestamp: number | null;
+    // Heightmap (surface probing) config + last measured grid.
+    heightmapResolution: number;     // mm between probe points
+    heightmapSafeTravel: number;     // mm above surface for travel between points
+    heightmapMaxDistance: number;    // mm max downward probe travel
+    heightmapProbingHeight: number;  // mm above surface to begin probing from
+    heightmapEdgeInset: number;      // mm to inset the grid from the stock edges
+    lastHeightmap: HeightmapData | null;
+}
+
+/** A probed surface map: row-major grid of Z OFFSETS (probedZ − reference). */
+export interface HeightmapData {
+    shape: StockType;
+    originX: number;   // min-corner X of the grid (work coords)
+    originY: number;   // min-corner Y of the grid (work coords)
+    stepX: number;     // X spacing between columns
+    stepY: number;     // Y spacing between rows
+    cols: number;
+    rows: number;
+    z: Array<number | null>;  // length rows*cols, row-major; null = not probed
+    resolution: number;
 }
 
 export interface ProbedDimensions {
@@ -154,4 +174,10 @@ export const DEFAULT_SETTINGS: StockProbeSettings = {
     lastProbedDiameter: null,
     lastProbedAngle: null,
     lastProbedTimestamp: null,
+    heightmapResolution: 10,
+    heightmapSafeTravel: 10,
+    heightmapMaxDistance: 10,
+    heightmapProbingHeight: 2,
+    heightmapEdgeInset: 5,
+    lastHeightmap: null,
 };

@@ -4,7 +4,7 @@ import RotationSVG from '../illustrations/RotationSVG';
 import ProbeParamsInput from '../components/ProbeParamsInput';
 import { StockProbeSettings, SideSelection, ProbeDirection } from '../definitions';
 import { generateRotationGCode } from '../StockProbeGCode';
-import { useGcodeRotation } from '../hooks/useGcodeRotation';
+import { useGcodeTransforms } from '../hooks/useGcodeTransforms';
 import cx from 'classnames';
 
 interface Props {
@@ -25,7 +25,8 @@ const RotationWizard: React.FC<Props> = ({ isOpen, onClose, settings, onSettings
     const [side, setSide] = useState<SideSelection>('top');
     const [direction, setDirection] = useState<ProbeDirection>('towards_center');
     const [rotationAngle, setRotationAngle] = useState<number | undefined>(undefined);
-    const { apply, canApply, rotationApplied } = useGcodeRotation();
+    const { applyRotation, fileLoaded, rotationApplied } = useGcodeTransforms();
+    const canApply = fileLoaded && !rotationApplied;
     const [buffer, setBuffer] = useState(settings.bufferDistance);
     const [probingZHeight, setProbingZHeight] = useState(-3);
     const [edgeOffset, setEdgeOffset] = useState(settings.rotationEdgeOffset ?? 15);
@@ -162,7 +163,7 @@ const RotationWizard: React.FC<Props> = ({ isOpen, onClose, settings, onSettings
                     onSettingsUpdate('lastProbedAngle', angle);
                 }
             }}
-            onApplyRotation={rotationAngle !== undefined ? () => apply(rotationAngle) : undefined}
+            onApplyRotation={rotationAngle !== undefined ? () => applyRotation(rotationAngle) : undefined}
             canApplyRotation={canApply}
             rotationApplied={rotationApplied}
         />

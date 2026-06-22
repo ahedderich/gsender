@@ -5,3 +5,10 @@ export { generateCornerProbeGCode }                                  from './cor
 export { generateSingleEdgeGCode }                                   from './singleEdge';
 export { generateRotationGCode }                                     from './rotation';
 export { rotateGcodeXY }                                              from './rotateGcode';
+export { generateHeightmapGrid, sampleHeightmap }                    from './heightmap';
+export type { GridLayout }                                           from './heightmap';
+export { applyHeightmapToGcode }                                     from './applyHeightmap';
+export { composeGcode }                                              from './composeGcode';
+export type { TransformState }                                       from './composeGcode';
+export { generateHeightmapGCode, hmCaptureKey, hmValueKey }          from './heightmapProbe';
+export type { HeightmapProbeParams }                                 from './heightmapProbe';

@@ -15,6 +15,7 @@ import { Connection } from 'app/features/Connection/definitions';
 import { Console } from 'app/features/Console/definitions';
 import { JobStatus } from 'app/features/FileControl/definitions';
 import { Location } from 'app/features/Location/definitions';
+import { HeightmapData } from 'app/features/StockProbe/definitions';
 import { Probe } from 'app/features/Probe/definitions';
 import { Rotary } from 'app/features/Rotary/definitions';
 import { Spindle, SpindleState } from 'app/features/Spindle/definitions';
@@ -156,11 +157,14 @@ export interface FileInfoState {
     content: string;
     fileType: FILE_TYPE_T;
     usedAxes: Array<string>;
-    // Stock-probe rotation: backup of the pre-rotation gcode plus whether a
-    // rotation is currently applied to `content` and by how many degrees (CCW).
+    // Stock-probe transforms: `rawContent` is the pristine original (captured on
+    // load). `content` is rebuilt from it by composing the active transforms —
+    // rotation (X/Y) and heightmap (Z autolevel) — which can be toggled independently.
     rawContent: string;
     rotationApplied: boolean;
     appliedRotationAngle: number;
+    heightmapApplied: boolean;
+    heightmapData: HeightmapData | null;
 }
 
 export interface PreferencesState {

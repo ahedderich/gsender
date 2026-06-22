@@ -1,75 +1,90 @@
 import reducer, {
     updateFileContent,
-    applyGcodeRotation,
-    revertGcodeRotation,
+    setGcodeTransforms,
 } from 'app/store/redux/slices/fileInfo.slice';
+import { HeightmapData } from '../definitions';
+
+const HM: HeightmapData = {
+    shape: 'rectangle', originX: 0, originY: 0, stepX: 10, stepY: 10,
+    cols: 2, rows: 2, resolution: 10, z: [0, 1, 1, 2],
+};
 
 const loaded = () =>
-    reducer(undefined, updateFileContent({ content: 'G1 X1 Y2', name: 'job.nc', size: 8 }));
+    reducer(undefined, updateFileContent({ content: 'ORIG', name: 'job.nc', size: 4 }));
 
-describe('fileInfo slice — gcode rotation apply/revert', () => {
-    it('apply stores the original as rawContent and marks rotation applied', () => {
-        const s0 = loaded();
-        const s1 = reducer(
-            s0,
-            applyGcodeRotation({
-                content: 'G1 X-2 Y1', rawContent: s0.content, name: 'job.nc', size: 9, angle: 3,
-            }),
-        );
-        expect(s1.content).toBe('G1 X-2 Y1');
-        expect(s1.rawContent).toBe('G1 X1 Y2');
-        expect(s1.rotationApplied).toBe(true);
-        expect(s1.appliedRotationAngle).toBe(3);
+const tx = (over: Partial<Parameters<typeof setGcodeTransforms>[0]>) =>
+    setGcodeTransforms({
+        content: 'X', name: 'job.nc', size: 1,
+        rotationApplied: false, appliedRotationAngle: 0,
+        heightmapApplied: false, heightmapData: null,
+        ...over,
     });
 
-    it('re-applying does not overwrite the original backup', () => {
-        const s0 = loaded();
-        const s1 = reducer(s0, applyGcodeRotation({ content: 'rot1', rawContent: s0.content, name: 'job.nc', size: 4, angle: 3 }));
-        const s2 = reducer(s1, applyGcodeRotation({ content: 'rot2', rawContent: 'rot1', name: 'job.nc', size: 4, angle: 5 }));
-        expect(s2.content).toBe('rot2');
-        expect(s2.rawContent).toBe('G1 X1 Y2'); // still the true original
-        expect(s2.appliedRotationAngle).toBe(5);
+describe('fileInfo slice — unified gcode transforms', () => {
+    it('captures the pristine original on load', () => {
+        const s = loaded();
+        expect(s.content).toBe('ORIG');
+        expect(s.rawContent).toBe('ORIG');
+        expect(s.rotationApplied).toBe(false);
+        expect(s.heightmapApplied).toBe(false);
     });
 
-    it('revert restores the original content and clears applied state', () => {
-        const s0 = loaded();
-        const s1 = reducer(s0, applyGcodeRotation({ content: 'rotated', rawContent: s0.content, name: 'job.nc', size: 7, angle: 3 }));
-        const s2 = reducer(s1, revertGcodeRotation({ content: s0.content, name: 'job.nc', size: s0.size }));
-        expect(s2.content).toBe('G1 X1 Y2');
-        expect(s2.rotationApplied).toBe(false);
-        expect(s2.appliedRotationAngle).toBe(0);
-        expect(s2.rawContent).toBe('');
+    it('applies rotation without touching rawContent', () => {
+        const s = reducer(loaded(), tx({ content: 'ROT', rotationApplied: true, appliedRotationAngle: 3 }));
+        expect(s.content).toBe('ROT');
+        expect(s.rawContent).toBe('ORIG');
+        expect(s.rotationApplied).toBe(true);
+        expect(s.appliedRotationAngle).toBe(3);
+        expect(s.heightmapApplied).toBe(false);
     });
 
-    it('revert survives the re-upload echo arriving first (content not lost)', () => {
-        const s0 = loaded();
-        const s1 = reducer(s0, applyGcodeRotation({ content: 'rotated', rawContent: s0.content, name: 'job.nc', size: 7, angle: 3 }));
-        // Echo of the revert upload (original content) lands before revertGcodeRotation,
-        // clearing rawContent. Revert must still restore the original via its payload.
-        const echo = reducer(s1, updateFileContent({ content: s0.content, name: 'job.nc', size: s0.size }));
-        expect(echo.rawContent).toBe(''); // echo cleared the backup
-        const s2 = reducer(echo, revertGcodeRotation({ content: s0.content, name: 'job.nc', size: s0.size }));
-        expect(s2.content).toBe('G1 X1 Y2'); // not '' — the bug being fixed
-        expect(s2.rotationApplied).toBe(false);
+    it('applies heightmap independently of rotation', () => {
+        const s = reducer(loaded(), tx({ content: 'HM', heightmapApplied: true, heightmapData: HM }));
+        expect(s.content).toBe('HM');
+        expect(s.rawContent).toBe('ORIG');
+        expect(s.heightmapApplied).toBe(true);
+        expect(s.heightmapData).toEqual(HM);
+        expect(s.rotationApplied).toBe(false);
     });
 
-    it('preserves rotation state when the re-upload echoes the same content back', () => {
-        const s0 = loaded();
-        const s1 = reducer(s0, applyGcodeRotation({ content: 'rotated', rawContent: s0.content, name: 'job.nc', size: 7, angle: 3 }));
-        // file:load echo of our own rotated program
-        const s2 = reducer(s1, updateFileContent({ content: 'rotated', name: 'job.nc', size: 7 }));
+    it('applies both transforms together', () => {
+        const s = reducer(loaded(), tx({
+            content: 'BOTH', rotationApplied: true, appliedRotationAngle: 3,
+            heightmapApplied: true, heightmapData: HM,
+        }));
+        expect(s.content).toBe('BOTH');
+        expect(s.rawContent).toBe('ORIG');
+        expect(s.rotationApplied).toBe(true);
+        expect(s.heightmapApplied).toBe(true);
+    });
+
+    it('reverts one transform while keeping the other', () => {
+        const both = reducer(loaded(), tx({
+            content: 'BOTH', rotationApplied: true, appliedRotationAngle: 3,
+            heightmapApplied: true, heightmapData: HM,
+        }));
+        // Revert rotation only (compose now heightmap-only).
+        const s = reducer(both, tx({ content: 'HM_ONLY', heightmapApplied: true, heightmapData: HM }));
+        expect(s.content).toBe('HM_ONLY');
+        expect(s.rotationApplied).toBe(false);
+        expect(s.heightmapApplied).toBe(true);
+        expect(s.rawContent).toBe('ORIG');
+    });
+
+    it('preserves transforms when the re-upload echoes the same content', () => {
+        const s1 = reducer(loaded(), tx({ content: 'ROT', rotationApplied: true, appliedRotationAngle: 3 }));
+        const s2 = reducer(s1, updateFileContent({ content: 'ROT', name: 'job.nc', size: 3 }));
         expect(s2.rotationApplied).toBe(true);
-        expect(s2.rawContent).toBe('G1 X1 Y2');
-        expect(s2.appliedRotationAngle).toBe(3);
+        expect(s2.rawContent).toBe('ORIG');
     });
 
-    it('loading a new file clears any applied-rotation state', () => {
-        const s0 = loaded();
-        const s1 = reducer(s0, applyGcodeRotation({ content: 'rotated', rawContent: s0.content, name: 'job.nc', size: 7, angle: 3 }));
+    it('loading a different file resets transforms and recaptures the original', () => {
+        const s1 = reducer(loaded(), tx({ content: 'ROT', rotationApplied: true, appliedRotationAngle: 3 }));
         const s2 = reducer(s1, updateFileContent({ content: 'NEW', name: 'other.nc', size: 3 }));
         expect(s2.content).toBe('NEW');
+        expect(s2.rawContent).toBe('NEW');
         expect(s2.rotationApplied).toBe(false);
-        expect(s2.rawContent).toBe('');
-        expect(s2.appliedRotationAngle).toBe(0);
+        expect(s2.heightmapApplied).toBe(false);
+        expect(s2.heightmapData).toBe(null);
     });
 });

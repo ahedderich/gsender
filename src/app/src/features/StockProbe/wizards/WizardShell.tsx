@@ -52,6 +52,8 @@ interface Props {
     onApplyRotation?: () => void;
     canApplyRotation?: boolean;
     rotationApplied?: boolean;
+    /** When set, replaces the default ResultsStep with custom results content. */
+    renderResults?: (handlers: { onRetry: () => void; onClose: () => void }) => React.ReactNode;
 }
 
 const STEP_LABELS: Record<WizardStep, string> = {
@@ -97,6 +99,7 @@ const WizardShell: React.FC<Props> = ({
     onApplyRotation,
     canApplyRotation,
     rotationApplied,
+    renderResults,
 }) => {
     const [step, setStep] = useState<WizardStep>('intro');
     const [probeVerified, setProbeVerified] = useState(false);
@@ -417,7 +420,10 @@ const WizardShell: React.FC<Props> = ({
                 )}
 
                 {/* ── Step 3a: Results (success) ── */}
-                {step === 'results' && (
+                {step === 'results' && renderResults && (
+                    renderResults({ onRetry: handleRetry, onClose: handleClose })
+                )}
+                {step === 'results' && !renderResults && (
                     <ResultsStep
                         wcsPosition={{
                             x: typeof wpos.x === 'number' ? wpos.x.toFixed(3) : String(wpos.x),
