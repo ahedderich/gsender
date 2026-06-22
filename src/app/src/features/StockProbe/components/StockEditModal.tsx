@@ -27,6 +27,7 @@ const StockEditModal: React.FC<Props> = ({ isOpen, onClose, settings, onUpdate }
                     <DialogTitle>Stock Dimensions</DialogTitle>
                 </DialogHeader>
 
+                <form onSubmit={(e) => { e.preventDefault(); onClose(); }}>
                 <div className="flex flex-col gap-4 py-2">
                     {/* Stock type */}
                     <div>
@@ -37,6 +38,7 @@ const StockEditModal: React.FC<Props> = ({ isOpen, onClose, settings, onUpdate }
                             {(['rectangle', 'round'] as StockType[]).map((t) => (
                                 <button
                                     key={t}
+                                    type="button"
                                     onClick={() => onUpdate('stockType', t)}
                                     className={cx(
                                         'flex-1 py-2 rounded border capitalize text-sm transition-colors',
@@ -117,8 +119,9 @@ const StockEditModal: React.FC<Props> = ({ isOpen, onClose, settings, onUpdate }
                 </div>
 
                 <DialogFooter>
-                    <Button variant="primary" onClick={onClose}>Done</Button>
+                    <Button type="submit" variant="primary" onClick={onClose}>Done</Button>
                 </DialogFooter>
+                </form>
             </DialogContent>
         </Dialog>
     );

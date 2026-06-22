@@ -1,7 +1,7 @@
-import { ProbeTask, EdgeProbeParams, EdgeSelection } from '../definitions';
+import { ProbeStep, EdgeProbeParams, EdgeSelection } from '../definitions';
 import { probeTouchApproach, probeTouchRetract } from './helpers';
 
-export function generateSingleEdgeGCode(params: EdgeProbeParams): ProbeTask[] {
+export function generateSingleEdgeGCode(params: EdgeProbeParams): ProbeStep[] {
     const {
         edge,
         probeFeedrateFast: ff,
@@ -10,6 +10,7 @@ export function generateSingleEdgeGCode(params: EdgeProbeParams): ProbeTask[] {
         bufferDistance: buf,
         wcsIndex,
         safeHeight = 10,
+        tipDiameter = 2,
     } = params;
 
     const edgeMap: Record<EdgeSelection, { axis: string; outDir: number; probeDir: number }> = {
@@ -20,6 +21,10 @@ export function generateSingleEdgeGCode(params: EdgeProbeParams): ProbeTask[] {
     };
 
     const { axis, outDir, probeDir } = edgeMap[edge];
+
+    // The tool centre stops one tip radius shy of the edge (on the approach side), so set
+    // the work zero to that offset — making the true edge read 0.
+    const edgeZero = (-probeDir * tipDiameter / 2).toFixed(3);
 
     return [
         {
@@ -35,8 +40,8 @@ export function generateSingleEdgeGCode(params: EdgeProbeParams): ProbeTask[] {
         {
             label: `Probing ${edge} edge`,
             commands: [
-                ...probeTouchApproach(axis, probeDir, buf + 10, `SP_EDGE_${axis}`, ff, fs),
-                `G10 L20 P${wcsIndex} ${axis}0`,
+                ...probeTouchApproach(axis, probeDir, buf + 10, ff, fs),
+                `G10 L20 P${wcsIndex} ${axis}${edgeZero}`,
                 ...probeTouchRetract(axis, probeDir, tr),
             ],
         },

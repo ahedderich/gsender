@@ -1,4 +1,4 @@
-import { ProbeTask, CornerProbeParams, CornerSelection } from '../definitions';
+import { ProbeStep, CornerProbeParams, CornerSelection } from '../definitions';
 import { PROBE_RETRACT_TOTAL } from './constants';
 import { probeTouchApproach, probeTouchRetract } from './helpers';
 
@@ -9,7 +9,7 @@ const CORNER_SIGNS: Record<CornerSelection, { x: number; y: number }> = {
     BR: { x:  1, y: -1 },
 };
 
-export function generateCornerProbeGCode(params: CornerProbeParams): ProbeTask[] {
+export function generateCornerProbeGCode(params: CornerProbeParams): ProbeStep[] {
     const {
         corner,
         probeFeedrateFast: ff,
@@ -19,6 +19,7 @@ export function generateCornerProbeGCode(params: CornerProbeParams): ProbeTask[]
         xyProbingHeight: xyH,
         wcsIndex,
         safeHeight = 10,
+        tipDiameter = 2,
     } = params;
 
     const signs      = CORNER_SIGNS[corner];
@@ -26,6 +27,10 @@ export function generateCornerProbeGCode(params: CornerProbeParams): ProbeTask[]
     const probeDist  = buf + 5;
     const probeXDir  = -signs.x;
     const probeYDir  = -signs.y;
+    // Tool centre stops one tip radius shy of each edge — offset the work zero so the
+    // true edge reads 0.
+    const xEdgeZero  = (-probeXDir * tipDiameter / 2).toFixed(3);
+    const yEdgeZero  = (-probeYDir * tipDiameter / 2).toFixed(3);
     const liftToSafe = (safeHeight - PROBE_RETRACT_TOTAL).toFixed(3);
     const liftFromXY = (safeHeight - xyH).toFixed(3);
     const sinkToXY   = (xyH - safeHeight).toFixed(3);
@@ -54,8 +59,8 @@ export function generateCornerProbeGCode(params: CornerProbeParams): ProbeTask[]
         {
             label: 'Probing X edge',
             commands: [
-                ...probeTouchApproach('X', probeXDir, probeDist, 'SP_X_EDGE', ff, fs),
-                `G10 L20 P${wcsIndex} X0`,
+                ...probeTouchApproach('X', probeXDir, probeDist, ff, fs),
+                `G10 L20 P${wcsIndex} X${xEdgeZero}`,
                 ...probeTouchRetract('X', probeXDir, tr),
             ],
         },
@@ -72,8 +77,8 @@ export function generateCornerProbeGCode(params: CornerProbeParams): ProbeTask[]
         {
             label: 'Probing Y edge',
             commands: [
-                ...probeTouchApproach('Y', probeYDir, probeDist, 'SP_Y_EDGE', ff, fs),
-                `G10 L20 P${wcsIndex} Y0`,
+                ...probeTouchApproach('Y', probeYDir, probeDist, ff, fs),
+                `G10 L20 P${wcsIndex} Y${yEdgeZero}`,
                 ...probeTouchRetract('Y', probeYDir, tr),
             ],
         },

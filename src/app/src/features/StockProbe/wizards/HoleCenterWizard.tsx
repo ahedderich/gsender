@@ -14,6 +14,7 @@ interface Props {
 
 const HoleCenterWizard: React.FC<Props> = ({ isOpen, onClose, onBack, settings, onSettingsUpdate }) => {
     const [diameter, setDiameter] = useState(settings.stockDiameter);
+    const [actualDiameter, setActualDiameter] = useState<number | undefined>(undefined);
 
     const saveDiameter = (v: number) => { setDiameter(v); onSettingsUpdate('stockDiameter', v); };
 
@@ -28,6 +29,7 @@ const HoleCenterWizard: React.FC<Props> = ({ isOpen, onClose, onBack, settings, 
             bufferDistance: settings.bufferDistance,
             xyProbingHeight: settings.xyProbingHeight,
             wcsIndex: settings.wcsIndex,
+            tipDiameter: settings.tipDiameter,
         });
 
     const intro = (
@@ -60,8 +62,10 @@ const HoleCenterWizard: React.FC<Props> = ({ isOpen, onClose, onBack, settings, 
         </div>
     );
 
-    const handleProbeComplete = () => {
-        onSettingsUpdate('lastProbedDiameter', diameter);
+    const handleProbeComplete = (vars: Record<string, number>) => {
+        const measuredDiameter = vars.SP_HOLE_DIAMETER ?? diameter;
+        setActualDiameter(measuredDiameter);
+        onSettingsUpdate('lastProbedDiameter', measuredDiameter);
         onSettingsUpdate('lastProbedWidth', null);
         onSettingsUpdate('lastProbedLength', null);
         onSettingsUpdate('lastProbedTimestamp', Date.now());
@@ -78,7 +82,7 @@ const HoleCenterWizard: React.FC<Props> = ({ isOpen, onClose, onBack, settings, 
             onExecute={handleExecute}
             showXY={true}
             wcsIndex={settings.wcsIndex}
-            probedDimensions={{ diameter }}
+            probedDimensions={{ diameter: actualDiameter ?? diameter }}
             onProbeComplete={handleProbeComplete}
         />
     );

@@ -49,6 +49,7 @@ const SingleEdgeWizard: React.FC<Props> = ({
             bufferDistance: buffer,
             xyProbingHeight: xyHeight,
             wcsIndex: settings.wcsIndex,
+            tipDiameter: settings.tipDiameter,
         });
 
     const axisLabel = edge.startsWith('X') ? 'X' : 'Y';

@@ -18,14 +18,15 @@ import {
     DialogTitle,
 } from 'app/components/shadcn/Dialog';
 import { Button } from 'app/components/Button';
+import { shallowEqual } from 'react-redux';
 import { useTypedSelector } from 'app/hooks/useTypedSelector';
 import { GRBL_ACTIVE_STATE_IDLE, GRBL_ACTIVE_STATE_ALARM } from 'app/constants';
 import { FeederStatus } from 'app/lib/definitions/sender_feeder';
 import { GRBL_ALARMS } from '../../../../../server/controllers/Grbl/constants';
 import controller from 'app/lib/controller';
 import ResultsStep from './ResultsStep';
-import { ProbeTask, WizardStep } from '../definitions';
-import { getSharedContextInjectionLines, setSharedProbeContext } from '../sharedProbeContext';
+import { ProbeContext, ProbePoint, ProbeStep, WizardStep } from '../definitions';
+import { parseProbeReport } from '../parseProbeReport';
 
 interface ProbedDimensions {
     width?: number;
@@ -41,7 +42,7 @@ interface Props {
     onBack?: () => void;
     introContent: React.ReactNode;
     connectivityTest: boolean;
-    onExecute: () => ProbeTask[];
+    onExecute: () => ProbeStep[];
     showXY?: boolean;
     showZ?: boolean;
     isRotation?: boolean;
@@ -59,6 +60,22 @@ const STEP_LABELS: Record<WizardStep, string> = {
 };
 
 const VISIBLE_STEPS: WizardStep[] = ['intro', 'executing', 'results'];
+
+// Stable reference returned by the selector while the wizard is closed. Returning the same
+// object on every dispatch makes the useSelector subscription inert (no re-render, no effect
+// runs) when the wizard isn't active — so the ~10 mounted-but-closed wizards stop reacting to
+// every status report while gcode is streaming.
+const IDLE_SELECTION = {
+    activeState:    'Idle',
+    probePinStatus: false,
+    isConnected:    false,
+    wpos:           { x: '0.000', y: '0.000', z: '0.000' },
+    mpos:           { x: 0, y: 0, z: 0 },
+    rawAlarmCode:   null as number | null,
+    feederStatus:   null as FeederStatus | null,
+};
+
+const ORIGIN: ProbePoint = { x: 0, y: 0, z: 0 };
 
 const WizardShell: React.FC<Props> = ({
     title,
@@ -82,29 +99,48 @@ const WizardShell: React.FC<Props> = ({
     const [taskLabels, setTaskLabels] = useState<string[]>([]);
     const [currentTaskIdx, setCurrentTaskIdx] = useState(0);
 
-    // Refs for per-task execution tracking.
-    const tasksRef          = useRef<ProbeTask[]>([]);
+    // Refs for per-step execution tracking.
+    const stepsRef          = useRef<ProbeStep[]>([]);
     const currentTaskIdxRef = useRef(0);
-    // Accumulates [MSG:KEY=VALUE] lines received during execution.
-    const msgVarsRef        = useRef<Record<string, number>>({});
+    // Shared context accumulated across steps (machine coords). Step generators read it;
+    // `compute` callbacks fill `values`.
+    const ctxRef            = useRef<ProbeContext>({ start: ORIGIN, current: ORIGIN, probes: {}, values: {} });
+    // All probe contacts captured this run, in arrival order, parsed from `[PRB:...]`.
+    const prbRef            = useRef<ProbePoint[]>([]);
+    // prbRef length when the current step was sent — lets us pick out the contact(s) that
+    // arrived during this step.
+    const stepPrbStartRef   = useRef(0);
+    // Latest machine position, mirrored from the selector so the completion effect (which
+    // omits mpos from its deps) always reads a fresh value.
+    const mposRef           = useRef<ProbePoint>(ORIGIN);
     // Mirror of `step` kept in sync via a useEffect so the completion effect can read the
     // current step value without listing `step` as a dependency (which would trigger it on
     // step→'executing' with stale feederStatus and cause a false-positive advance).
     const stepRef           = useRef<WizardStep>('intro');
 
-    const { activeState, probePinStatus, isConnected, wpos, mpos, rawAlarmCode, feederStatus } = useTypedSelector((state) => ({
-        activeState:    state.controller.state.status?.activeState ?? 'Idle',
-        probePinStatus: state.controller.state.status?.pinState.P ?? false,
-        isConnected:    state.connection.isConnected ?? false,
-        wpos:           state.controller.state.status?.wpos ?? { x: '0.000', y: '0.000', z: '0.000' },
-        mpos:           state.controller.mpos ?? { x: 0, y: 0, z: 0 },
-        rawAlarmCode:   state.controller.state.status?.alarmCode ?? null,
-        feederStatus:   state.controller.feeder.status as FeederStatus | null,
-    }));
+    // While the wizard is closed, return a stable constant so the subscription is inert.
+    // shallowEqual then limits re-renders to actual value changes while it's open.
+    const { activeState, probePinStatus, isConnected, wpos, mpos, rawAlarmCode, feederStatus } = useTypedSelector(
+        (state) => isOpen ? ({
+            activeState:    state.controller.state.status?.activeState ?? 'Idle',
+            probePinStatus: state.controller.state.status?.pinState.P ?? false,
+            isConnected:    state.connection.isConnected ?? false,
+            wpos:           state.controller.state.status?.wpos ?? { x: '0.000', y: '0.000', z: '0.000' },
+            mpos:           state.controller.mpos ?? { x: 0, y: 0, z: 0 },
+            rawAlarmCode:   state.controller.state.status?.alarmCode ?? null,
+            feederStatus:   state.controller.feeder.status as FeederStatus | null,
+        }) : IDLE_SELECTION,
+        shallowEqual,
+    );
 
     // Keep stepRef in sync so the completion effect can read the current step via a ref
     // instead of closing over the state value (which would require 'step' as a dependency).
     useEffect(() => { stepRef.current = step; }, [step]);
+
+    // Keep mposRef fresh — the completion effect reads it without listing mpos as a dep.
+    useEffect(() => {
+        mposRef.current = { x: Number(mpos.x), y: Number(mpos.y), z: Number(mpos.z) };
+    }, [mpos]);
 
     // Latch probe verification: once touched, stay verified until dialog resets
     useEffect(() => {
@@ -113,21 +149,21 @@ const WizardShell: React.FC<Props> = ({
         }
     }, [probePinStatus, step]);
 
-    // Mount-time listener: capture [MSG:KEY=VALUE] lines emitted by (MSG, KEY=VALUE) gcode.
+    // While-open listener: capture `[PRB:...]` probe contacts as they stream in.
+    // Gated on isOpen so closed wizards aren't regex-matching every serial read line.
     useEffect(() => {
+        if (!isOpen) return;
         const handler = (data: string) => {
-            if (typeof data !== 'string') return;
-            const m = data.trim().match(/^\[MSG:([A-Za-z_]\w*)\s*=\s*([-\d.]+)\]$/);
-            if (m) msgVarsRef.current[m[1]] = parseFloat(m[2]);
+            const p = parseProbeReport(data);
+            if (p) prbRef.current.push(p);
         };
         controller.addListener('serialport:read', handler);
         return () => controller.removeListener('serialport:read', handler);
-    }, []);
+    }, [isOpen]);
 
     // Detect alarm during probing → abort to failed step
     useEffect(() => {
         if (step === 'executing' && activeState === GRBL_ACTIVE_STATE_ALARM) {
-            controller.command('probe:context:end');
             setAlarmCode(rawAlarmCode !== null ? Number(rawAlarmCode) : null);
             setStep('failed');
         }
@@ -149,42 +185,68 @@ const WizardShell: React.FC<Props> = ({
             !feederStatus.pending &&
             activeState === GRBL_ACTIVE_STATE_IDLE
         ) {
-            const tasks   = tasksRef.current;
-            const nextIdx = currentTaskIdxRef.current + 1;
+            const ctx       = ctxRef.current;
+            const idx       = currentTaskIdxRef.current;
+            const probeStep = stepsRef.current[idx];
+            if (!probeStep) return;
 
-            if (nextIdx < tasks.length) {
+            // Machine position now that this step has finished — used by the next step's
+            // generator to turn an absolute target into a relative delta.
+            ctx.current = { ...mposRef.current };
+
+            // Record the probe contact (the last `[PRB:...]` seen during this step).
+            if (probeStep.capture) {
+                const contacts = prbRef.current.slice(stepPrbStartRef.current);
+                if (contacts.length > 0) {
+                    ctx.probes[probeStep.capture] = contacts[contacts.length - 1];
+                }
+            }
+
+            // Client-side math for this step (fills ctx.values).
+            probeStep.compute?.(ctx);
+
+            const nextIdx = idx + 1;
+            if (nextIdx < stepsRef.current.length) {
                 currentTaskIdxRef.current = nextIdx;
                 setCurrentTaskIdx(nextIdx);
-                controller.command('gcode:safe', tasks[nextIdx].commands, 'G21');
+                sendStep(nextIdx);
             } else {
-                controller.command('probe:context:end');
                 setStep('results');
-                setSharedProbeContext(msgVarsRef.current);
-                onProbeComplete?.(msgVarsRef.current);
+                onProbeComplete?.(ctx.values);
             }
         }
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [feederStatus, activeState]);
 
+    // Resolve a step's commands (calling its generator with the live context) and send them.
+    function sendStep(idx: number) {
+        const step = stepsRef.current[idx];
+        stepPrbStartRef.current = prbRef.current.length;
+        const commands = typeof step.commands === 'function'
+            ? step.commands(ctxRef.current)
+            : step.commands;
+        controller.command('gcode:safe', commands, 'G21');
+    }
+
     const executeProbe = () => {
-        const tasks = onExecute();
-        const injectionLines = getSharedContextInjectionLines();
-        if (injectionLines.length > 0 && tasks.length > 0) {
-            tasks[0] = { ...tasks[0], commands: [...injectionLines, ...tasks[0].commands] };
-        }
-        tasksRef.current          = tasks;
+        const steps = onExecute();
+        stepsRef.current          = steps;
         currentTaskIdxRef.current = 0;
-        msgVarsRef.current        = {};
-        setTaskLabels(tasks.map((t) => t.label));
+        prbRef.current            = [];
+        ctxRef.current = {
+            start:   { ...mposRef.current },
+            current: { ...mposRef.current },
+            probes:  {},
+            values:  {},
+        };
+        setTaskLabels(steps.map((s) => s.label));
         setCurrentTaskIdx(0);
         setStep('executing');
-        controller.command('probe:context:start');
-        controller.command('gcode:safe', tasks[0].commands, 'G21');
+        sendStep(0);
     };
 
     const handleRetry = () => {
-        controller.command('probe:context:end');
-        tasksRef.current          = [];
+        stepsRef.current          = [];
         currentTaskIdxRef.current = 0;
         setStep('intro');
         setProbeVerified(false);
@@ -194,7 +256,7 @@ const WizardShell: React.FC<Props> = ({
     };
 
     const handleClose = () => {
-        tasksRef.current          = [];
+        stepsRef.current          = [];
         currentTaskIdxRef.current = 0;
         setStep('intro');
         setProbeVerified(false);

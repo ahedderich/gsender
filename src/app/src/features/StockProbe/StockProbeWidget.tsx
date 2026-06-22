@@ -13,6 +13,7 @@ import cx from 'classnames';
 import includes from 'lodash/includes';
 import { Button } from 'app/components/Button';
 import { useTypedSelector } from 'app/hooks/useTypedSelector';
+import store from 'app/store';
 import {
     GRBL,
     GRBLHAL,
@@ -57,6 +58,7 @@ const StockProbeWidget: React.FC = () => {
         stockLength:        config.get('stockLength',        DEFAULT_SETTINGS.stockLength),
         stockDiameter:      config.get('stockDiameter',      DEFAULT_SETTINGS.stockDiameter),
         xyProbingHeight:    config.get('xyProbingHeight',    DEFAULT_SETTINGS.xyProbingHeight),
+        tipDiameter:        config.get('tipDiameter',        DEFAULT_SETTINGS.tipDiameter),
         bufferDistance:     config.get('bufferDistance',     DEFAULT_SETTINGS.bufferDistance),
         safeHeight:         config.get('safeHeight',         DEFAULT_SETTINGS.safeHeight),
         probeFeedrateFast:  config.get('probeFeedrateFast',  DEFAULT_SETTINGS.probeFeedrateFast),
@@ -105,6 +107,15 @@ const StockProbeWidget: React.FC = () => {
     };
 
     const isRect = settings.stockType === 'rectangle';
+
+    // The probe connectivity test is a global probe setting (toggled in Settings →
+    // "Connection test"). Source it from there so deselecting it also hides the
+    // connectivity step in the stock-probing wizards. Read live so changes take effect
+    // without remounting the widget.
+    const effectiveSettings: StockProbeSettings = {
+        ...settings,
+        connectivityTest: store.get('widgets.probe.connectivityTest', DEFAULT_SETTINGS.connectivityTest),
+    };
 
     const hasStockDimensions = isRect
         ? settings.stockWidth > 0 && settings.stockLength > 0
@@ -219,19 +230,19 @@ const StockProbeWidget: React.FC = () => {
             <ProbeRoutinesModal
                 isOpen={activeModal === 'probeRoutines'}
                 onClose={() => setActiveModal(null)}
-                settings={settings}
+                settings={effectiveSettings}
                 onSettingsUpdate={updateSetting}
             />
             <IndividualProbeModal
                 isOpen={activeModal === 'individual'}
                 onClose={() => setActiveModal(null)}
-                settings={settings}
+                settings={effectiveSettings}
                 onSettingsUpdate={updateSetting}
             />
             <RotationWizard
                 isOpen={activeModal === 'rotation'}
                 onClose={() => setActiveModal(null)}
-                settings={settings}
+                settings={effectiveSettings}
                 onSettingsUpdate={updateSetting}
             />
         </div>

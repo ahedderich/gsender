@@ -1,8 +1,8 @@
-import { ProbeTask, StockProbeGCodeParams } from '../definitions';
+import { ProbeStep, StockProbeGCodeParams } from '../definitions';
 import { PROBE_RETRACT_TOTAL } from './constants';
 import { probeTouchApproach, probeTouchRetract } from './helpers';
 
-export function generateZOnlyGCode(params: StockProbeGCodeParams): ProbeTask[] {
+export function generateZOnlyGCode(params: StockProbeGCodeParams): ProbeStep[] {
     const {
         probeFeedrateFast: ff,
         probeFeedrateSlow: fs,
@@ -22,7 +22,7 @@ export function generateZOnlyGCode(params: StockProbeGCodeParams): ProbeTask[] {
         {
             label: 'Probing Z surface',
             commands: [
-                ...probeTouchApproach('Z', -1, buf + 10, 'SP_Z', ff, fs),
+                ...probeTouchApproach('Z', -1, buf + 10, ff, fs),
                 `G10 L20 P${wcsIndex} Z0`,
                 ...probeTouchRetract('Z', -1, tr),
             ],

@@ -41,6 +41,7 @@ const CornerProbeWizard: React.FC<Props> = ({ isOpen, onClose, onBack, settings,
             bufferDistance: buffer,
             xyProbingHeight: xyHeight,
             wcsIndex: settings.wcsIndex,
+            tipDiameter: settings.tipDiameter,
         });
 
     const intro = (

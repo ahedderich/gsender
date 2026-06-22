@@ -13,11 +13,19 @@ interface Props {
     onSettingsUpdate: (key: keyof StockProbeSettings, value: unknown) => void;
 }
 
+interface ProbedDimensions {
+    width?: number;
+    length?: number;
+    diameter?: number;
+    rotationAngle?: number;
+}
+
 const XYZCenterWizard: React.FC<Props> = ({ isOpen, onClose, onBack, settings, onSettingsUpdate }) => {
     const isRect = settings.stockType === 'rectangle';
     const [buffer, setBuffer] = useState(settings.bufferDistance);
     const [xyHeight, setXyHeight] = useState(settings.xyProbingHeight);
     const [safeHeight, setSafeHeight] = useState(settings.safeHeight ?? 10);
+    const [actualDimensions, setActualDimensions] = useState<ProbedDimensions | undefined>(undefined);
 
     const saveBuffer = (v: number) => { setBuffer(v); onSettingsUpdate('bufferDistance', v); };
     const saveXyHeight = (v: number) => { setXyHeight(v); onSettingsUpdate('xyProbingHeight', v); };
@@ -36,6 +44,7 @@ const XYZCenterWizard: React.FC<Props> = ({ isOpen, onClose, onBack, settings, o
                 bufferDistance: buffer,
                 xyProbingHeight: xyHeight,
                 wcsIndex: settings.wcsIndex,
+                tipDiameter: settings.tipDiameter,
             });
         }
         return generateXYZCenterRoundGCode({
@@ -79,17 +88,22 @@ const XYZCenterWizard: React.FC<Props> = ({ isOpen, onClose, onBack, settings, o
         </div>
     );
 
-    const probedDimensions = isRect
+    const fallbackDimensions: ProbedDimensions = isRect
         ? { width: settings.stockWidth, length: settings.stockLength }
         : { diameter: settings.stockDiameter };
 
-    const handleProbeComplete = () => {
+    const handleProbeComplete = (vars: Record<string, number>) => {
         if (isRect) {
-            onSettingsUpdate('lastProbedWidth', settings.stockWidth);
-            onSettingsUpdate('lastProbedLength', settings.stockLength);
+            const width = vars.SP_WIDTH ?? settings.stockWidth;
+            const length = vars.SP_LENGTH ?? settings.stockLength;
+            setActualDimensions({ width, length });
+            onSettingsUpdate('lastProbedWidth', width);
+            onSettingsUpdate('lastProbedLength', length);
             onSettingsUpdate('lastProbedDiameter', null);
         } else {
-            onSettingsUpdate('lastProbedDiameter', settings.stockDiameter);
+            const diameter = vars.SP_DIAMETER ?? settings.stockDiameter;
+            setActualDimensions({ diameter });
+            onSettingsUpdate('lastProbedDiameter', diameter);
             onSettingsUpdate('lastProbedWidth', null);
             onSettingsUpdate('lastProbedLength', null);
         }
@@ -108,7 +122,7 @@ const XYZCenterWizard: React.FC<Props> = ({ isOpen, onClose, onBack, settings, o
             showXY={true}
             showZ={true}
             wcsIndex={settings.wcsIndex}
-            probedDimensions={probedDimensions}
+            probedDimensions={actualDimensions ?? fallbackDimensions}
             onProbeComplete={handleProbeComplete}
         />
     );
