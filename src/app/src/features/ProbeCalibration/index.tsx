@@ -4,7 +4,14 @@ import { Button } from 'app/components/Button';
 import { useTypedSelector } from 'app/hooks/useTypedSelector';
 import { GRBL_ACTIVE_STATE_IDLE, GRBL_ACTIVE_STATE_ALARM } from 'app/constants';
 import controller from 'app/lib/controller';
-import { generateCalibrationProbeTask } from './calibrationGCode';
+import store from 'app/store';
+import {
+    generateCalibrationProbeTask,
+    generateReferenceProbeTask,
+    computeTipDiameter,
+    ReferenceContacts,
+    TipCalibrationResult,
+} from './calibrationGCode';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -14,8 +21,23 @@ type PageStep =
     | 'guide2' | 'probing2'
     | 'guide3' | 'probing3'
     | 'guide4' | 'probing4'
+    | 'guideRef' | 'probingRef'
     | 'results'
     | 'failed';
+
+// Config key shared with the Probe widget (widgets["probe"].tipDiameter3D).
+const TIP_DIAMETER_KEY = 'widgets["probe"].tipDiameter3D';
+const DEFAULT_TIP_DIAMETER = 2;
+const DEFAULT_REFERENCE_DIAMETER = 20;
+
+function getConfiguredTipDiameter(): number {
+    const v = store.get(TIP_DIAMETER_KEY, DEFAULT_TIP_DIAMETER) as number;
+    return typeof v === 'number' && v > 0 ? v : DEFAULT_TIP_DIAMETER;
+}
+
+function saveTipDiameter(value: number): void {
+    store.set(TIP_DIAMETER_KEY, value);
+}
 
 export interface CalibrationResult {
     measurements: [number, number, number, number];
@@ -75,25 +97,31 @@ function computeResult(m: [number, number, number, number]): CalibrationResult {
     };
 }
 
-/** Parse X from grbl PRB response: [PRB:-10.234,0.123,-5.678:1] */
-function parsePrbX(line: string): number | null {
+/** Parse a grbl PRB response: [PRB:-10.234,0.123,-5.678:1] → {x,y,z} (null if no contact). */
+function parsePrb(line: string): { x: number; y: number; z: number } | null {
     const match = /\[PRB:(-?\d+\.\d+),(-?\d+\.\d+),(-?\d+\.\d+):(\d)\]/.exec(line);
     if (!match || match[4] === '0') return null;
-    return parseFloat(match[1]);
+    return { x: parseFloat(match[1]), y: parseFloat(match[2]), z: parseFloat(match[3]) };
+}
+
+/** Parse just X from a PRB response (eccentricity phase probes -X only). */
+function parsePrbX(line: string): number | null {
+    return parsePrb(line)?.x ?? null;
 }
 
 // ── Progress bar ──────────────────────────────────────────────────────────────
 
-const PROGRESS_STEPS: PageStep[] = ['intro', 'probing1', 'probing2', 'probing3', 'probing4', 'results'];
-const PROGRESS_LABELS = ['Setup', 'Step 1', 'Step 2', 'Step 3', 'Step 4', 'Results'];
+const PROGRESS_STEPS: PageStep[] = ['intro', 'probing1', 'probing2', 'probing3', 'probing4', 'probingRef', 'results'];
+const PROGRESS_LABELS = ['Setup', 'Step 1', 'Step 2', 'Step 3', 'Step 4', 'Tip Cal', 'Results'];
 
 const ProgressBar: React.FC<{ step: PageStep }> = ({ step }) => {
     const idx = PROGRESS_STEPS.indexOf(
-        step === 'guide1'   ? 'intro'
-        : step === 'guide2' ? 'probing1'
-        : step === 'guide3' ? 'probing2'
-        : step === 'guide4' ? 'probing3'
-        : step === 'failed' ? 'results'
+        step === 'guide1'     ? 'intro'
+        : step === 'guide2'   ? 'probing1'
+        : step === 'guide3'   ? 'probing2'
+        : step === 'guide4'   ? 'probing3'
+        : step === 'guideRef' ? 'probing4'
+        : step === 'failed'   ? 'results'
         : step,
     );
     return (
@@ -173,25 +201,35 @@ const ProbeCalibration: React.FC = () => {
     const [previousResult, setPreviousResult] = useState<CalibrationResult | null>(null);
     const [alarmOccurred, setAlarmOccurred]   = useState(false);
 
+    // Tip-diameter (reference) phase
+    const [referenceDiameter, setReferenceDiameter] = useState<number>(DEFAULT_REFERENCE_DIAMETER);
+    const [tipResult, setTipResult]     = useState<TipCalibrationResult | null>(null);
+    const [currentTipDiameter, setCurrentTipDiameter] = useState<number>(DEFAULT_TIP_DIAMETER);
+    const [tipApplied, setTipApplied]   = useState(false);
+
     const wasExecutingRef  = useRef(false);
     const okCountRef       = useRef(0);
     const totalCmdsRef     = useRef(0);
     const allAckedRef      = useRef(false);
     const prbXRef          = useRef<number | null>(null);
+    const prbListRef       = useRef<Array<{ x: number; y: number }>>([]);
+    const referenceDiameterRef = useRef<number>(DEFAULT_REFERENCE_DIAMETER);
     const handleReadRef    = useRef<((data: string) => void) | null>(null);
 
-    const { activeState, isConnected } = useTypedSelector((state) => ({
+    const { activeState, isConnected, mpos } = useTypedSelector((state) => ({
         activeState:  state.controller.state.status?.activeState ?? 'Idle',
         isConnected:  state.connection.isConnected ?? false,
+        mpos:         state.controller.mpos ?? { x: 0, y: 0, z: 0 },
     }));
 
     useEffect(() => {
         setPreviousResult(loadResult());
+        setCurrentTipDiameter(getConfiguredTipDiameter());
     }, []);
 
     // Alarm detection during probing
     useEffect(() => {
-        const isProbing = ['probing1', 'probing2', 'probing3', 'probing4'].includes(step);
+        const isProbing = ['probing1', 'probing2', 'probing3', 'probing4', 'probingRef'].includes(step);
         if (isProbing && activeState === GRBL_ACTIVE_STATE_ALARM) {
             detachListener();
             setAlarmOccurred(true);
@@ -201,8 +239,9 @@ const ProbeCalibration: React.FC = () => {
 
     // Idle detection: batch complete
     useEffect(() => {
-        const isProbing = ['probing1', 'probing2', 'probing3', 'probing4'].includes(step);
-        if (!isProbing) return;
+        const isEccProbing = ['probing1', 'probing2', 'probing3', 'probing4'].includes(step);
+        const isRefProbing = step === 'probingRef';
+        if (!isEccProbing && !isRefProbing) return;
 
         if (activeState !== GRBL_ACTIVE_STATE_IDLE) {
             wasExecutingRef.current = true;
@@ -210,6 +249,25 @@ const ProbeCalibration: React.FC = () => {
         if (wasExecutingRef.current && activeState === GRBL_ACTIVE_STATE_IDLE && allAckedRef.current) {
             detachListener();
             wasExecutingRef.current = false;
+
+            if (isRefProbing) {
+                const prbs = prbListRef.current;
+                prbListRef.current = [];
+                // Expect four contacts in order [+X, -X, +Y, -Y].
+                if (prbs.length >= 4) {
+                    const contacts: ReferenceContacts = {
+                        xPlus:  prbs[0].x,
+                        xMinus: prbs[1].x,
+                        yPlus:  prbs[2].y,
+                        yMinus: prbs[3].y,
+                    };
+                    setTipResult(computeTipDiameter(referenceDiameterRef.current, contacts));
+                    setStep('results');
+                } else {
+                    setStep('failed');
+                }
+                return;
+            }
 
             const capturedX = prbXRef.current;
             prbXRef.current = null;
@@ -222,7 +280,8 @@ const ProbeCalibration: React.FC = () => {
                         setResult(r);
                         saveResult(r);
                         setPreviousResult(r);
-                        setStep('results');
+                        // Eccentricity done — continue to the tip-diameter reference phase.
+                        setStep('guideRef');
                     } else {
                         const nextGuide = (['guide2', 'guide3', 'guide4'] as PageStep[])[updated.length - 1];
                         setStep(nextGuide);
@@ -270,16 +329,59 @@ const ProbeCalibration: React.FC = () => {
         controller.command('gcode:safe', task.commands, 'G21');
     };
 
+    const runReferenceProbe = () => {
+        detachListener();
+        okCountRef.current  = 0;
+        allAckedRef.current = false;
+        prbListRef.current  = [];
+        referenceDiameterRef.current = referenceDiameter;
+        wasExecutingRef.current = false;
+
+        // Capture machine centre now — used for absolute G90 retracts in the GCode.
+        const centre = { x: Number(mpos.x), y: Number(mpos.y) };
+        const task = generateReferenceProbeTask(referenceDiameter, centre);
+        totalCmdsRef.current = task.commands.filter(
+            (c) => !(c.startsWith('%') && c.includes('=')),
+        ).length;
+
+        const handler = (data: string) => {
+            if (typeof data !== 'string') return;
+            const prb = parsePrb(data);
+            if (prb !== null) prbListRef.current.push({ x: prb.x, y: prb.y });
+            if (data.trim() === 'ok') {
+                okCountRef.current++;
+                if (okCountRef.current >= totalCmdsRef.current) allAckedRef.current = true;
+            }
+        };
+        handleReadRef.current = handler;
+        controller.addListener('serialport:read', handler);
+
+        setStep('probingRef');
+        controller.command('gcode:safe', task.commands, 'G21');
+    };
+
+    const handleApplyTipDiameter = () => {
+        if (!tipResult) return;
+        const value = Math.round(tipResult.tipDiameter * 1000) / 1000;
+        saveTipDiameter(value);
+        setCurrentTipDiameter(value);
+        setTipApplied(true);
+    };
+
     const handleReset = () => {
         detachListener();
         setStep('intro');
         setMeasurements([]);
         setResult(null);
+        setTipResult(null);
+        setTipApplied(false);
         setAlarmOccurred(false);
+        setCurrentTipDiameter(getConfiguredTipDiameter());
         wasExecutingRef.current = false;
         okCountRef.current  = 0;
         allAckedRef.current = false;
         prbXRef.current     = null;
+        prbListRef.current  = [];
     };
 
     // ── Intro ──────────────────────────────────────────────────────────────────
@@ -290,11 +392,17 @@ const ProbeCalibration: React.FC = () => {
                 <ProgressBar step={step} />
 
                 <p className="text-sm text-gray-600 dark:text-gray-300">
-                    This wizard measures the offset of your 3D touch probe's stylus tip from its body
-                    centre. The machine will probe toward <strong>−X</strong> four times. Between each
-                    probe you rotate the probe body <strong>90°</strong>, allowing X and Y deviation to
-                    be calculated from the four measurements.
+                    This wizard calibrates your 3D touch probe in two phases. First it measures the
+                    offset of the stylus tip from the body centre by probing toward <strong>−X</strong>{' '}
+                    four times, rotating the probe body <strong>90°</strong> between each. Then it
+                    derives the <strong>tip diameter</strong> from a hole of known size so the probe
+                    triggers at the correct zero on every side.
                 </p>
+
+                <div className="bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-3 text-sm flex items-center justify-between">
+                    <span className="text-gray-500 dark:text-gray-400">Current configured tip diameter</span>
+                    <span className="font-mono font-semibold">{currentTipDiameter.toFixed(3)} mm</span>
+                </div>
 
                 <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700 rounded-lg p-4 text-sm space-y-1">
                     <p className="font-semibold text-blue-700 dark:text-blue-300 mb-1">Before you start:</p>
@@ -302,6 +410,7 @@ const ProbeCalibration: React.FC = () => {
                         <li>Position the spindle near a flat vertical surface to the left (−X side)</li>
                         <li>Leave ~50 mm clearance between probe tip and surface</li>
                         <li>Ensure the probe cable port faces <strong>back (away from you)</strong></li>
+                        <li>Have a hole/pocket of known diameter ready for the tip-diameter phase</li>
                     </ul>
                 </div>
 
@@ -368,10 +477,56 @@ const ProbeCalibration: React.FC = () => {
         );
     }
 
+    // ── Tip-diameter reference guide ───────────────────────────────────────────
+
+    if (step === 'guideRef') {
+        const valid = referenceDiameter > 0;
+        return (
+            <div className="flex flex-col gap-5 max-w-2xl dark:text-white">
+                <ProgressBar step={step} />
+
+                <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg px-4 py-3 flex items-center gap-2 text-sm text-green-700 dark:text-green-300">
+                    <FaCheck className="w-4 h-4" />
+                    Tip offset measured. Now calibrate the tip diameter.
+                </div>
+
+                <div className="bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4 text-sm space-y-3">
+                    <p className="font-semibold text-gray-700 dark:text-gray-200">Tip diameter calibration</p>
+                    <p className="text-gray-500 dark:text-gray-400">
+                        Position the probe tip at the <strong>centre</strong> of a hole or pocket of
+                        known diameter, lowered to probing depth. The machine probes outward toward
+                        all four walls (+X, −X, +Y, −Y). The tip diameter is the amount by which the
+                        measured span falls short of the true diameter.
+                    </p>
+                    <label className="flex items-center gap-3">
+                        <span className="text-gray-600 dark:text-gray-300">Known hole diameter</span>
+                        <input
+                            type="number"
+                            min={0}
+                            step={0.1}
+                            value={referenceDiameter}
+                            onChange={(e) => setReferenceDiameter(parseFloat(e.target.value) || 0)}
+                            className="w-28 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 px-2 py-1 font-mono text-right"
+                        />
+                        <span className="text-gray-400">mm</span>
+                    </label>
+                </div>
+
+                <div className="flex items-center gap-3">
+                    <Button variant="primary" onClick={runReferenceProbe} disabled={!valid}>
+                        Probe Tip Diameter
+                    </Button>
+                    <Button variant="outline" onClick={handleReset}>Cancel</Button>
+                </div>
+            </div>
+        );
+    }
+
     // ── Probing spinner ────────────────────────────────────────────────────────
 
-    if (step === 'probing1' || step === 'probing2' || step === 'probing3' || step === 'probing4') {
-        const stepNum = step === 'probing1' ? 1 : step === 'probing2' ? 2 : step === 'probing3' ? 3 : 4;
+    if (step === 'probing1' || step === 'probing2' || step === 'probing3' || step === 'probing4' || step === 'probingRef') {
+        const isRef = step === 'probingRef';
+        const stepNum = isRef ? 0 : step === 'probing1' ? 1 : step === 'probing2' ? 2 : step === 'probing3' ? 3 : 4;
         return (
             <div className="flex flex-col gap-5 max-w-2xl dark:text-white">
                 <ProgressBar step={step} />
@@ -380,9 +535,11 @@ const ProbeCalibration: React.FC = () => {
                     <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
                     <div className="text-center">
                         <p className="text-base font-medium text-gray-700 dark:text-gray-200">
-                            Probing — Step {stepNum} of 4
+                            {isRef ? 'Probing tip diameter reference' : `Probing — Step ${stepNum} of 4`}
                         </p>
-                        <p className="text-sm text-gray-400 mt-1">{STEP_LABELS[stepNum]}</p>
+                        <p className="text-sm text-gray-400 mt-1">
+                            {isRef ? 'Probing all four walls' : STEP_LABELS[stepNum]}
+                        </p>
                         <p className="text-xs text-gray-400 mt-1">Do not interrupt or move the machine</p>
                     </div>
                     <Button
@@ -429,6 +586,44 @@ const ProbeCalibration: React.FC = () => {
                         ))}
                     </div>
                 </div>
+
+                {tipResult && (
+                    <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4 space-y-3">
+                        <p className="text-xs text-gray-500 dark:text-gray-400">
+                            Calibrated Tip Diameter (from {tipResult.knownDiameter.toFixed(3)} mm reference)
+                        </p>
+                        <div className="grid grid-cols-3 gap-3">
+                            <DeviationCell label="From X" value={tipResult.tipDiameterX} />
+                            <DeviationCell label="From Y" value={tipResult.tipDiameterY} />
+                            <DeviationCell label="Tip Ø" value={tipResult.tipDiameter} highlight />
+                        </div>
+                        <p className="text-xs text-gray-500 dark:text-gray-400">
+                            Trigger consistency (spread across all four sides):{' '}
+                            <span className="font-mono">{tipResult.consistency.toFixed(3)} mm</span>
+                            {tipResult.consistency > 0.1 && (
+                                <span className="text-amber-600 dark:text-amber-400">
+                                    {' '}— high; re-centre the probe in the hole and retry for a better result.
+                                </span>
+                            )}
+                        </p>
+                        <div className="flex items-center justify-between border-t border-blue-200 dark:border-blue-800 pt-3">
+                            <span className="text-sm text-gray-600 dark:text-gray-300">
+                                Configured: <span className="font-mono">{currentTipDiameter.toFixed(3)} mm</span>
+                                {' → '}
+                                New: <span className="font-mono font-semibold">{tipResult.tipDiameter.toFixed(3)} mm</span>
+                            </span>
+                            {tipApplied ? (
+                                <span className="flex items-center gap-1.5 text-sm text-green-600 dark:text-green-400">
+                                    <FaCheck className="w-3.5 h-3.5" /> Applied
+                                </span>
+                            ) : (
+                                <Button variant="primary" onClick={handleApplyTipDiameter}>
+                                    Apply Tip Diameter
+                                </Button>
+                            )}
+                        </div>
+                    </div>
+                )}
 
                 <div className="flex items-center gap-3">
                     <Button variant="primary" onClick={handleReset}>
